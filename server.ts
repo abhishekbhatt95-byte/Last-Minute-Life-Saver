@@ -505,7 +505,7 @@ async function triggerGlobalPrioritization() {
     Do not alter titles, deadlines, or anything else. Just prioritize.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-3.5-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -583,7 +583,7 @@ app.post("/api/tasks/:id/breakdown", async (req, res) => {
     Return JSON matching the schema precisely.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-3.5-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -666,7 +666,7 @@ app.post("/api/tasks/what-now", async (req, res) => {
     Return JSON with the recommended task ID, a robust and motivating reasoning explaining why this is the highest priority right now, and a formatted estimated duration string (e.g., "~2h 30m").`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-3.5-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -743,7 +743,7 @@ app.post("/api/tasks/generate-plan", async (req, res) => {
     }
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-3.5-flash",
       contents: cleanPrompt,
       config: {
         systemInstruction: systemPrompt,
