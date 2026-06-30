@@ -1,0 +1,6 @@
+{
+  "name": "Life Saver",
+  "description": "An AI-powered productivity companion that proactively helps users prioritize tasks, break them down, and manage schedules to avoid missing deadlines.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
