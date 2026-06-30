@@ -566,7 +566,7 @@ export default function App() {
     <div className="min-h-screen flex text-[#e2e2eb] selection:bg-[#c0c1ff] selection:text-[#1000a9]">
       
       {/* 1. Global Navigation Sidebar (Desktop) */}
-      <aside className="hidden md:flex flex-col fixed left-0 top-0 h-full w-[280px] m-6 rounded-xl bg-[#1e1f26]/60 backdrop-blur-3xl border border-white/5 shadow-xl py-8 px-4 z-40 glass-panel">
+      <aside className="hidden lg:flex flex-col fixed left-0 top-0 h-full w-[280px] m-6 rounded-xl bg-[#1e1f26]/60 backdrop-blur-3xl border border-white/5 shadow-xl py-8 px-4 z-40 glass-panel">
         
         {/* Profile / Brand Frame */}
         <div className="flex items-center gap-3 mb-10 px-2 cursor-pointer" onClick={() => setSelectedTask(null)}>
@@ -651,7 +651,7 @@ export default function App() {
       </aside>
 
       {/* 2. Top Header Navigation (Mobile bottom, Desktop top-right anchor) */}
-      <header className="hidden md:flex fixed top-0 right-0 w-[calc(100%-328px)] justify-end items-center px-10 py-6 z-30 pointer-events-none">
+      <header className="hidden lg:flex fixed top-0 right-0 w-[calc(100%-328px)] justify-end items-center px-10 py-6 z-30 pointer-events-none">
         <div className="flex items-center gap-4 pointer-events-auto">
           <button 
             onClick={() => setShowAddModal(true)}
@@ -681,14 +681,14 @@ export default function App() {
             title="Recalculate AI priority scores"
           >
             <span className={`material-symbols-outlined ${actionLoading ? "animate-spin" : ""}`}>
-              sync
+               sync
             </span>
           </button>
         </div>
       </header>
 
       {/* 2b. Mobile Top Brand Bar */}
-      <header className="md:hidden fixed top-0 left-0 right-0 h-16 bg-[#15161e]/80 backdrop-blur-md border-b border-white/5 z-40 flex items-center justify-between px-6 shadow-md">
+      <header className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-[#15161e]/80 backdrop-blur-md border-b border-white/5 z-40 flex items-center justify-between px-6 shadow-md">
         <div className="flex items-center gap-2 cursor-pointer" onClick={() => { setActiveTab("dashboard"); setSelectedTask(null); }}>
           <div className="w-8 h-8 rounded-full bg-[#c0c1ff]/20 flex items-center justify-center overflow-hidden border border-white/10">
             <img 
@@ -703,10 +703,22 @@ export default function App() {
           </h1>
         </div>
         
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
+          <button 
+            onClick={() => { setActiveTab("settings"); setSelectedTask(null); }}
+            className={`p-2 rounded-lg transition-colors flex items-center justify-center cursor-pointer ${
+              activeTab === "settings" && !selectedTask
+                ? "bg-[#c0c1ff]/20 text-[#c0c1ff]" 
+                : "text-[#c7c4d7] hover:text-white hover:bg-white/5"
+            }`}
+            title="System Settings"
+          >
+            <span className="material-symbols-outlined text-[18px]">settings</span>
+          </button>
+
           <button 
             onClick={() => setShowAddModal(true)}
-            className="bg-[#c0c1ff] hover:bg-[#c0c1ff]/90 text-[#1000a9] font-bold text-[10px] px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 cursor-pointer"
+            className="bg-[#c0c1ff] hover:bg-[#c0c1ff]/90 text-[#1000a9] font-bold text-[10px] sm:text-xs px-3 py-2 rounded-lg transition-all flex items-center gap-1 cursor-pointer shadow-md shadow-[#c0c1ff]/10"
           >
             <span className="material-symbols-outlined text-[14px] font-bold">add</span>
             Add Task
@@ -715,7 +727,7 @@ export default function App() {
       </header>
 
       {/* 3. Main Dynamic Content Canvas */}
-      <main className="flex-1 md:ml-[328px] min-h-screen relative p-6 md:p-10 lg:p-16 pt-24 pb-28 md:pt-[100px] md:pb-16 overflow-y-auto">
+      <main className="flex-1 lg:ml-[328px] min-h-screen relative p-4 sm:p-6 md:p-10 lg:p-16 pt-24 pb-32 lg:pt-[100px] lg:pb-16 overflow-y-auto">
         
         {/* Background Ambient Violet/Indigo Glows */}
         <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-[#c0c1ff]/5 rounded-full blur-[140px] pointer-events-none z-0"></div>
@@ -1419,7 +1431,7 @@ export default function App() {
                 >
                   <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div>
-                      <h2 className="font-bold text-3xl text-white tracking-tight">Focus Backlog</h2>
+                      <h2 className="font-bold text-2xl sm:text-3xl text-white tracking-tight">Focus Backlog</h2>
                       <p className="text-sm text-[#c7c4d7]">Strategic roadmap of active milestones and prioritized outcomes.</p>
                     </div>
                     <button 
@@ -1652,7 +1664,7 @@ export default function App() {
                   className="space-y-8"
                 >
                   <header>
-                    <h2 className="font-bold text-3xl text-white tracking-tight mb-2">AI Planner Workspace</h2>
+                    <h2 className="font-bold text-2xl sm:text-3xl text-white tracking-tight mb-2">AI Planner Workspace</h2>
                     <p className="text-sm text-[#c7c4d7]">Collaborate with Life Saver AI to generate task blueprints, optimize schedules, and remove bottleneck workloads.</p>
                   </header>
 
@@ -1754,7 +1766,7 @@ export default function App() {
                 >
                   <header className="flex flex-col md:flex-row md:items-end justify-between gap-4">
                     <div>
-                      <h2 className="font-bold text-3xl text-white tracking-tight mb-2">Performance Analytics</h2>
+                      <h2 className="font-bold text-2xl sm:text-3xl text-white tracking-tight mb-2">Performance Analytics</h2>
                       <p className="text-sm text-[#c7c4d7]">Review your focus behaviors, deadline pacing, and productivity streaks.</p>
                     </div>
 
@@ -1813,7 +1825,7 @@ export default function App() {
                             <div className="absolute bottom-full mb-1 bg-[#1e1f26] border border-[#c0c1ff]/30 px-2 py-1 rounded text-[9px] text-[#c0c1ff] font-bold font-mono opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
                               {bar.score} pts
                             </div>
-                            <div className="w-8 md:w-12 bg-white/5 hover:bg-white/10 rounded-t-lg h-40 flex items-end relative transition-colors duration-300">
+                            <div className="w-6 sm:w-8 md:w-12 bg-white/5 hover:bg-white/10 rounded-t-lg h-40 flex items-end relative transition-colors duration-300">
                               <div 
                                 className={`w-full rounded-t-lg transition-all duration-1000 ${
                                   bar.active 
@@ -2051,7 +2063,7 @@ export default function App() {
                   className="space-y-6"
                 >
                   <header>
-                    <h2 className="font-bold text-3xl text-white tracking-tight">System Settings</h2>
+                    <h2 className="font-bold text-2xl sm:text-3xl text-white tracking-tight">System Settings</h2>
                     <p className="text-sm text-[#c7c4d7]">Configure environment variables, connected services, and study coaching profiles.</p>
                   </header>
 
@@ -2395,7 +2407,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* 8. Gorgeous Mobile Bottom Navigation Bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#1e1f26]/90 backdrop-blur-xl border-t border-white/5 z-45 flex items-center justify-around px-2 pb-safe shadow-[0_-8px_30px_rgba(0,0,0,0.5)]">
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#1e1f26]/90 backdrop-blur-xl border-t border-white/5 z-45 flex items-center justify-around px-2 pb-safe shadow-[0_-8px_30px_rgba(0,0,0,0.5)]">
         {[
           { id: "dashboard", icon: "dashboard", label: "Home" },
           { id: "tasks", icon: "assignment", label: "Tasks" },
