@@ -487,7 +487,7 @@ async function triggerGlobalPrioritization() {
   }
 
   try {
-    const prompt = `You are Zenith AI, an expert real-time productivity coach. Rank the following tasks by optimal priority score (0 to 100), label them ("High", "Medium", or "Low"), and provide a 1-sentence reasoning explaining "Why this matters now" based on their deadline, duration, and importance.
+    const prompt = `You are Life Saver AI, an expert real-time productivity coach. Rank the following tasks by optimal priority score (0 to 100), label them ("High", "Medium", or "Low"), and provide a 1-sentence reasoning explaining "Why this matters now" based on their deadline, duration, and importance.
     
     Current Time: ${new Date().toISOString()}
 
@@ -505,7 +505,7 @@ async function triggerGlobalPrioritization() {
     Do not alter titles, deadlines, or anything else. Just prioritize.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-2.0-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -583,7 +583,7 @@ app.post("/api/tasks/:id/breakdown", async (req, res) => {
     Return JSON matching the schema precisely.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-2.0-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -666,7 +666,7 @@ app.post("/api/tasks/what-now", async (req, res) => {
     Return JSON with the recommended task ID, a robust and motivating reasoning explaining why this is the highest priority right now, and a formatted estimated duration string (e.g., "~2h 30m").`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-2.0-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -713,7 +713,7 @@ app.post("/api/tasks/generate-plan", async (req, res) => {
 
     const cleanPrompt = sanitizeInput(userPrompt || "suggest some relevant next steps for AI development", 500);
 
-    const systemPrompt = `You are Zenith AI, an advanced productivity coach. Based on the user's prompt (like 'suggest 3 tasks for internship prep' or 'help me with model tuning'), generate 2 to 3 practical, high-fidelity productivity tasks that they should add to their schedule.
+    const systemPrompt = `You are Life Saver AI, an advanced productivity coach. Based on the user's prompt (like 'suggest 3 tasks for internship prep' or 'help me with model tuning'), generate 2 to 3 practical, high-fidelity productivity tasks that they should add to their schedule.
     
     Each task should have:
     - title: brief, action-oriented (e.g. 'Read Scikit-Learn ensembles', 'Draft STAR stories')
@@ -743,7 +743,7 @@ app.post("/api/tasks/generate-plan", async (req, res) => {
     }
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-2.0-flash",
       contents: cleanPrompt,
       config: {
         systemInstruction: systemPrompt,

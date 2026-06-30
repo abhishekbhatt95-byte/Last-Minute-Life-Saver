@@ -518,7 +518,7 @@ export default function App() {
             <div className="w-16 h-16 rounded-3xl bg-[#c0c1ff]/10 flex items-center justify-center border border-white/10 shadow-lg shadow-[#c0c1ff]/5 animate-pulse-soft">
               <span className="material-symbols-outlined text-3xl text-[#c0c1ff] animate-bounce-subtle">psychology</span>
             </div>
-            <h1 className="font-bold text-2xl text-white tracking-tight mt-2">Zenith AI Pacing Engine</h1>
+            <h1 className="font-bold text-2xl text-white tracking-tight mt-2">Life Saver AI Pacing Engine</h1>
             <p className="text-xs text-[#c7c4d7]">Initializing dynamic coaches & model alignment...</p>
           </div>
 
@@ -896,7 +896,7 @@ export default function App() {
                             <span className="w-1 h-1 rounded-full bg-[#d0bcff]"></span>
                             Strategic Alignment
                           </h4>
-                          <p>{selectedTask.aiBreakdownInsight || selectedTask.priorityReasoning || "Zenith AI will automatically evaluate your progress and compile active insights once you start checkmarking completed milestones."}</p>
+                          <p>{selectedTask.aiBreakdownInsight || selectedTask.priorityReasoning || "Life Saver AI will automatically evaluate your progress and compile active insights once you start checkmarking completed milestones."}</p>
                         </div>
 
                         {selectedTask.suggestedResource && (
@@ -996,7 +996,18 @@ export default function App() {
 
                   {/* Greeting Header */}
                   <header>
-                    <h1 className="font-bold text-3xl md:text-4xl text-white mb-2 tracking-tight">Good Evening, Abhishek 👋</h1>
+                    <h1 className="font-bold text-3xl md:text-4xl text-white mb-2 tracking-tight">
+                      {(() => {
+                        const hour = new Date().getHours();
+                        const greeting =
+                          hour < 12
+                            ? "Good Morning"
+                            : hour < 17
+                            ? "Good Afternoon"
+                            : "Good Evening";
+                        return `${greeting} 👋`;
+                      })()}
+                    </h1>
                     <p className="text-sm text-[#c7c4d7]">
                       You have <span className="text-red-400 font-bold">{sortedPendingTasks.length} deadlines</span> approaching. Let's finish them before they become emergencies.
                     </p>
@@ -1027,7 +1038,7 @@ export default function App() {
                                   AI Productivity Coach
                                   <span className="w-2 h-2 rounded-full bg-[#c0c1ff] animate-ping"></span>
                                 </span>
-                                <p className="text-[10px] font-mono text-[#c7c4d7]/70 mt-0.5">Zenith Recommendation Engine</p>
+                                <p className="text-[10px] font-mono text-[#c7c4d7]/70 mt-0.5">Life Saver Recommendation Engine</p>
                               </div>
                             </div>
                             {topTask && risk && (
@@ -1051,7 +1062,7 @@ export default function App() {
                                   <div>
                                     <span className="text-[9px] font-mono text-[#c0c1ff] uppercase tracking-wider block mb-1 font-bold">AI Reasoning</span>
                                     <p className="text-xs text-white leading-relaxed">
-                                      {topTask.priorityReasoning || "Zenith algorithm detected high-importance deadline nearing. Initiating recommended session immediately is predicted to optimize deadline avoidance scores."}
+                                      {topTask.priorityReasoning || "Life Saver algorithm detected high-importance deadline nearing. Initiating recommended session immediately is predicted to optimize deadline avoidance scores."}
                                     </p>
                                   </div>
                                 </div>
@@ -1101,28 +1112,33 @@ export default function App() {
                     })()}
 
                     {/* Stats bento panel */}
-                    <div className="lg:col-span-4 grid grid-cols-2 gap-4 h-full">
-                      {[
-                        { icon: "assignment_late", iconColor: "text-[#d0bcff]", val: pendingTasks.length, label: "Due Today", trend: `+${pendingTasks.length}` },
-                        { icon: "check_circle", iconColor: "text-[#4edea3]", val: completedTasks.length + 28, label: "Completed", trend: "+12" },
-                        { icon: "warning", iconColor: "text-[#ffb4ab]", val: sortedPendingTasks.filter(t => getCountdown(t.deadline).isOverdue).length, label: "Missed", trend: "--" },
-                        { icon: "speed", iconColor: "text-[#c0c1ff]", val: 92, label: "AI Score", trend: "Top 5%" }
-                      ].map((stat, i) => (
-                        <div key={i} className="glass-panel rounded-xl p-4 flex flex-col justify-between hover:bg-[#373940]/10 transition-colors">
-                          <div className="flex justify-between items-start mb-4">
-                            <div className="w-9 h-9 rounded-lg bg-[#33343b]/40 flex items-center justify-center">
-                              <span className={`material-symbols-outlined ${stat.iconColor} text-[18px]`}>{stat.icon}</span>
+                    <div className="lg:col-span-4 flex flex-col justify-between h-full gap-3">
+                      <div className="grid grid-cols-2 gap-4 h-full">
+                        {[
+                          { icon: "assignment_late", iconColor: "text-[#d0bcff]", val: pendingTasks.length, label: "Due Today", trend: `+${pendingTasks.length}` },
+                          { icon: "check_circle", iconColor: "text-[#4edea3]", val: completedTasks.length, label: "Completed", trend: "+12" },
+                          { icon: "warning", iconColor: "text-[#ffb4ab]", val: sortedPendingTasks.filter(t => getCountdown(t.deadline).isOverdue).length, label: "Missed", trend: "--" },
+                          { icon: "speed", iconColor: "text-[#c0c1ff]", val: 92, label: "AI Score", trend: "Top 5%" }
+                        ].map((stat, i) => (
+                          <div key={i} className="glass-panel rounded-xl p-4 flex flex-col justify-between hover:bg-[#373940]/10 transition-colors">
+                            <div className="flex justify-between items-start mb-4">
+                              <div className="w-9 h-9 rounded-lg bg-[#33343b]/40 flex items-center justify-center">
+                                <span className={`material-symbols-outlined ${stat.iconColor} text-[18px]`}>{stat.icon}</span>
+                              </div>
+                              <span className="font-mono text-[9px] text-[#c7c4d7] bg-[#1e1f26] px-1.5 py-0.5 rounded">
+                                {stat.trend}
+                              </span>
                             </div>
-                            <span className="font-mono text-[9px] text-[#c7c4d7] bg-[#1e1f26] px-1.5 py-0.5 rounded">
-                              {stat.trend}
-                            </span>
+                            <div>
+                              <div className="text-2xl font-bold text-white font-mono leading-none">{stat.val}</div>
+                              <div className="text-[11px] text-[#c7c4d7] mt-1">{stat.label}</div>
+                            </div>
                           </div>
-                          <div>
-                            <div className="text-2xl font-bold text-white font-mono leading-none">{stat.val}</div>
-                            <div className="text-[11px] text-[#c7c4d7] mt-1">{stat.label}</div>
-                          </div>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-[#c7c4d7]/70 italic text-center font-mono">
+                        Sample analytics based on current task activity.
+                      </p>
                     </div>
 
                   </div>
@@ -1200,7 +1216,7 @@ export default function App() {
                                         <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-60 bg-[#15161e] border border-[#c0c1ff]/30 p-4 rounded-xl text-xs text-[#c7c4d7] opacity-0 group-hover/tooltip:opacity-100 transition-opacity duration-200 z-50 shadow-2xl space-y-2.5 backdrop-blur-xl">
                                           <div className="font-bold text-white flex items-center gap-1.5 border-b border-white/5 pb-1.5">
                                             <span className="material-symbols-outlined text-[14px] text-[#c0c1ff]">auto_awesome</span>
-                                            <span>Zenith Priority Breakdown</span>
+                                            <span>Life Saver Priority Breakdown</span>
                                           </div>
                                           <div className="space-y-1.5 font-mono text-[11px]">
                                             <div className="flex justify-between">
@@ -1479,7 +1495,7 @@ export default function App() {
                                         <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-60 bg-[#15161e] border border-[#c0c1ff]/30 p-4 rounded-xl text-xs text-[#c7c4d7] opacity-0 group-hover/tooltip:opacity-100 transition-opacity duration-200 z-50 shadow-2xl space-y-2.5 backdrop-blur-xl">
                                           <div className="font-bold text-white flex items-center gap-1.5 border-b border-white/5 pb-1.5">
                                             <span className="material-symbols-outlined text-[14px] text-[#c0c1ff]">auto_awesome</span>
-                                            <span>Zenith Priority Breakdown</span>
+                                            <span>Life Saver Priority Breakdown</span>
                                           </div>
                                           <div className="space-y-1.5 font-mono text-[11px]">
                                             <div className="flex justify-between">
@@ -1637,7 +1653,7 @@ export default function App() {
                 >
                   <header>
                     <h2 className="font-bold text-3xl text-white tracking-tight mb-2">AI Planner Workspace</h2>
-                    <p className="text-sm text-[#c7c4d7]">Collaborate with Zenith AI to generate task blueprints, optimize schedules, and remove bottleneck workloads.</p>
+                    <p className="text-sm text-[#c7c4d7]">Collaborate with Life Saver AI to generate task blueprints, optimize schedules, and remove bottleneck workloads.</p>
                   </header>
 
                   {/* Planner prompt builder */}
@@ -1659,7 +1675,7 @@ export default function App() {
                     </div>
 
                     <div className="flex justify-between items-center">
-                      <div className="text-[11px] text-[#c7c4d7]">Zenith AI parses scope patterns to structure high-fidelity checkmark logs.</div>
+                      <div className="text-[11px] text-[#c7c4d7]">Life Saver AI parses scope patterns to structure high-fidelity checkmark logs.</div>
                       <button
                         onClick={() => handleAIPlannerGenerate(plannerPrompt)}
                         disabled={plannerLoading}
@@ -1863,7 +1879,7 @@ export default function App() {
                       </div>
 
                       <div className="pt-4 border-t border-white/5 text-xs text-[#c7c4d7] leading-relaxed">
-                        <span className="text-[#c0c1ff] font-bold">Zenith Coach:</span> You are only 2 sessions away from breaking your monthly record. Keep focused!
+                        <span className="text-[#c0c1ff] font-bold">Life Saver Coach:</span> You are only 2 sessions away from breaking your monthly record. Keep focused!
                       </div>
                     </div>
 
@@ -2048,7 +2064,7 @@ export default function App() {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                         <div>
                           <span className="text-[#c7c4d7] block mb-1">User Email</span>
-                          <span className="text-white font-semibold font-mono">abhishekbhatt9265@gmail.com</span>
+                          <span className="text-white font-semibold font-mono">support@lifesaver.ai</span>
                         </div>
                         <div>
                           <span className="text-[#c7c4d7] block mb-1">Assigned Coach Model</span>
