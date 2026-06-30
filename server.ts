@@ -179,98 +179,103 @@ function validateTaskInput(body: any, isUpdate = false): string[] {
   return errors;
 }
 
-// In-memory Task Database (Pre-populated matching screenshots)
-let tasks: Task[] = [
-  {
-    id: "task-1",
-    title: "ML Assignment",
-    description: "Implement Random Forest and tune hyperparameters using GridSearch. Set up PyTorch and data pipelines.",
-    deadline: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(), // 2 hours from now
-    estimatedMinutes: 150,
-    importance: "High",
-    status: "pending",
-    createdAt: new Date().toISOString(),
-    priorityScore: 98,
-    priorityLabel: "High",
-    priorityReasoning: "Crucial for grade (carries 20%). You historically struggle with PyTorch setup, which takes extra time.",
-    subtasks: [
-      { id: "sub-1", text: "Collect Dataset (Scrape Kaggle for housing prices data)", done: true },
-      { id: "sub-2", text: "Clean Data (Handle missing values and encode categorical variables)", done: true },
-      { id: "sub-3", text: "Train Model (Implement Random Forest and tune hyperparameters)", done: false },
-      { id: "sub-4", text: "Evaluate Model (Calculate RMSE and plot feature importance)", done: false },
-      { id: "sub-5", text: "Build Presentation (Create slides summarizing methodology and results)", done: false }
-    ],
-    aiBreakdownInsight: "Based on your historical project pacing, model training usually requires multiple iterations. Starting this now ensures you have sufficient buffer time for hyperparameter tuning before the deadline.",
-    suggestedResource: {
-      title: "Scikit-Learn Ensemble Methods",
-      readTime: "5 mins"
+// Helper to get default initial tasks
+function getDefaultTasks(): Task[] {
+  return [
+    {
+      id: "task-1",
+      title: "ML Assignment",
+      description: "Implement Random Forest and tune hyperparameters using GridSearch. Set up PyTorch and data pipelines.",
+      deadline: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(), // 2 hours from now
+      estimatedMinutes: 150,
+      importance: "High",
+      status: "pending",
+      createdAt: new Date().toISOString(),
+      priorityScore: 98,
+      priorityLabel: "High",
+      priorityReasoning: "Crucial for grade (carries 20%). You historically struggle with PyTorch setup, which takes extra time.",
+      subtasks: [
+        { id: "sub-1", text: "Collect Dataset (Scrape Kaggle for housing prices data)", done: true },
+        { id: "sub-2", text: "Clean Data (Handle missing values and encode categorical variables)", done: true },
+        { id: "sub-3", text: "Train Model (Implement Random Forest and tune hyperparameters)", done: false },
+        { id: "sub-4", text: "Evaluate Model (Calculate RMSE and plot feature importance)", done: false },
+        { id: "sub-5", text: "Build Presentation (Create slides summarizing methodology and results)", done: false }
+      ],
+      aiBreakdownInsight: "Based on your historical project pacing, model training usually requires multiple iterations. Starting this now ensures you have sufficient buffer time for hyperparameter tuning before the deadline.",
+      suggestedResource: {
+        title: "Scikit-Learn Ensemble Methods",
+        readTime: "5 mins"
+      }
+    },
+    {
+      id: "task-2",
+      title: "Internship Preparation",
+      description: "Review resume and prepare top 3 STAR method interview stories.",
+      deadline: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 hours from now
+      estimatedMinutes: 120,
+      importance: "High",
+      status: "pending",
+      createdAt: new Date().toISOString(),
+      priorityScore: 85,
+      priorityLabel: "High",
+      priorityReasoning: "Important career milestone with upcoming panel interviews. Good prep boosts confidence.",
+      subtasks: null,
+      aiBreakdownInsight: null,
+      suggestedResource: null
+    },
+    {
+      id: "task-3",
+      title: "AI Planner Sync",
+      description: "Align on priority shifts, estimated efforts, and resolve conflicts.",
+      deadline: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+      estimatedMinutes: 30,
+      importance: "Medium",
+      status: "pending",
+      createdAt: new Date().toISOString(),
+      priorityScore: 60,
+      priorityLabel: "Medium",
+      priorityReasoning: "A quick sync ensures high focus alignment, avoiding redundant engineering work.",
+      subtasks: null,
+      aiBreakdownInsight: null,
+      suggestedResource: null
+    },
+    {
+      id: "task-4",
+      title: "Project Deep Work",
+      description: "Write core algorithmic logic, optimize critical paths, and draft tests.",
+      deadline: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
+      estimatedMinutes: 180,
+      importance: "High",
+      status: "pending",
+      createdAt: new Date().toISOString(),
+      priorityScore: 90,
+      priorityLabel: "High",
+      priorityReasoning: "Deep work block. Essential to make steady architecture progress without distractions.",
+      subtasks: null,
+      aiBreakdownInsight: null,
+      suggestedResource: null
+    },
+    {
+      id: "task-5",
+      title: "Evaluate Model",
+      description: "Run final validation metrics, plot confusion matrix, and document errors.",
+      deadline: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
+      estimatedMinutes: 60,
+      importance: "Medium",
+      status: "pending",
+      createdAt: new Date().toISOString(),
+      priorityScore: 75,
+      priorityLabel: "High",
+      priorityReasoning: "Validating performance is essential before presentation preparation.",
+      subtasks: null,
+      aiBreakdownInsight: null,
+      suggestedResource: null
     }
-  },
-  {
-    id: "task-2",
-    title: "Internship Preparation",
-    description: "Review resume and prepare top 3 STAR method interview stories.",
-    deadline: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 hours from now
-    estimatedMinutes: 120,
-    importance: "High",
-    status: "pending",
-    createdAt: new Date().toISOString(),
-    priorityScore: 85,
-    priorityLabel: "High",
-    priorityReasoning: "Important career milestone with upcoming panel interviews. Good prep boosts confidence.",
-    subtasks: null,
-    aiBreakdownInsight: null,
-    suggestedResource: null
-  },
-  {
-    id: "task-3",
-    title: "AI Planner Sync",
-    description: "Align on priority shifts, estimated efforts, and resolve conflicts.",
-    deadline: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
-    estimatedMinutes: 30,
-    importance: "Medium",
-    status: "pending",
-    createdAt: new Date().toISOString(),
-    priorityScore: 60,
-    priorityLabel: "Medium",
-    priorityReasoning: "A quick sync ensures high focus alignment, avoiding redundant engineering work.",
-    subtasks: null,
-    aiBreakdownInsight: null,
-    suggestedResource: null
-  },
-  {
-    id: "task-4",
-    title: "Project Deep Work",
-    description: "Write core algorithmic logic, optimize critical paths, and draft tests.",
-    deadline: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
-    estimatedMinutes: 180,
-    importance: "High",
-    status: "pending",
-    createdAt: new Date().toISOString(),
-    priorityScore: 90,
-    priorityLabel: "High",
-    priorityReasoning: "Deep work block. Essential to make steady architecture progress without distractions.",
-    subtasks: null,
-    aiBreakdownInsight: null,
-    suggestedResource: null
-  },
-  {
-    id: "task-5",
-    title: "Evaluate Model",
-    description: "Run final validation metrics, plot confusion matrix, and document errors.",
-    deadline: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
-    estimatedMinutes: 60,
-    importance: "Medium",
-    status: "pending",
-    createdAt: new Date().toISOString(),
-    priorityScore: 75,
-    priorityLabel: "High",
-    priorityReasoning: "Validating performance is essential before presentation preparation.",
-    subtasks: null,
-    aiBreakdownInsight: null,
-    suggestedResource: null
-  }
-];
+  ];
+}
+
+// In-memory Task Database (Pre-populated matching screenshots)
+let tasks: Task[] = getDefaultTasks();
 
 // Helper to simulate prioritization when Gemini is unavailable
 function simulatePrioritization(taskList: Task[]): Task[] {
@@ -471,6 +476,18 @@ app.post("/api/tasks/prioritize", async (req, res) => {
   } catch (error: any) {
     console.error("Prioritization endpoint failed:", sanitizeError(error));
     res.status(500).json({ error: "Failed to prioritize tasks. Fallback simulation active." });
+  }
+});
+
+// 5b. Seed default example tasks
+app.post("/api/tasks/seed", async (req, res) => {
+  try {
+    tasks = getDefaultTasks();
+    await triggerGlobalPrioritization();
+    res.json({ success: true, tasks });
+  } catch (error: any) {
+    console.error("Seed default tasks failed:", sanitizeError(error));
+    res.status(500).json({ error: "Failed to restore default example tasks." });
   }
 });
 

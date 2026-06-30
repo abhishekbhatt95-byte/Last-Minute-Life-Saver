@@ -4,11 +4,27 @@ import { Task, Subtask, AIPlannerSuggestion } from "./types";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<"dashboard" | "schedule" | "tasks" | "planner" | "analytics" | "settings">("dashboard");
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasks, setTasks] = useState<Task[]>(() => {
+    try {
+      const cached = localStorage.getItem("last_minute_tasks_cache");
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   
   // Loading & Action states
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => {
+    try {
+      const cached = localStorage.getItem("last_minute_tasks_cache");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        return parsed.length === 0;
+      }
+    } catch {}
+    return true;
+  });
   const [actionLoading, setActionLoading] = useState(false);
   const [plannerLoading, setPlannerLoading] = useState(false);
   const [aiCoachLoading, setAiCoachLoading] = useState(false);
@@ -45,7 +61,7 @@ export default function App() {
   ];
 
   useEffect(() => {
-    fetchTasks();
+    fetchTasks(true);
     
     // Fetch secure status from server
     fetch("/api/status")
@@ -62,6 +78,14 @@ export default function App() {
     }, 60000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("last_minute_tasks_cache", JSON.stringify(tasks));
+    } catch (e) {
+      console.error("Failed to save tasks cache", e);
+    }
+  }, [tasks]);
 
   useEffect(() => {
     let interval: any;
@@ -105,9 +129,12 @@ export default function App() {
     return { percentage, level, color };
   };
 
-  const fetchTasks = async () => {
+  const fetchTasks = async (isInitial = false) => {
     try {
-      setLoading(true);
+      // Only show full-screen loading state if this is the initial load AND we have no cached tasks
+      if (isInitial && tasks.length === 0) {
+        setLoading(true);
+      }
       const res = await fetch("/api/tasks");
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
@@ -119,6 +146,26 @@ export default function App() {
       showToast(err.message || "Failed to fetch tasks from the server.", "error");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const seedTasks = async () => {
+    try {
+      setActionLoading(true);
+      const res = await fetch("/api/tasks/seed", { method: "POST" });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to seed example tasks.");
+      }
+      const data = await res.json();
+      if (data.success) {
+        setTasks(data.tasks);
+        showToast("Default example tasks restored successfully!", "success");
+      }
+    } catch (err: any) {
+      showToast(err.message || "Failed to seed example tasks.", "error");
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -1317,13 +1364,23 @@ export default function App() {
                               </p>
                             </div>
 
-                            <button
-                              onClick={() => setShowAddModal(true)}
-                              className="inline-flex items-center gap-1.5 px-6 py-2.5 bg-[#c0c1ff] hover:bg-[#b0b2ff] text-[#1000a9] font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md hover:scale-[1.03] active:scale-[0.98]"
-                            >
-                              <span className="material-symbols-outlined text-[16px] font-bold">add</span>
-                              Create New Goal
-                            </button>
+                            <div className="flex flex-col sm:flex-row justify-center items-center gap-3">
+                              <button
+                                onClick={() => setShowAddModal(true)}
+                                className="inline-flex items-center gap-1.5 px-6 py-2.5 bg-[#c0c1ff] hover:bg-[#b0b2ff] text-[#1000a9] font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md hover:scale-[1.03] active:scale-[0.98]"
+                              >
+                                <span className="material-symbols-outlined text-[16px] font-bold">add</span>
+                                Create New Goal
+                              </button>
+                              <button
+                                onClick={seedTasks}
+                                disabled={actionLoading}
+                                className="inline-flex items-center gap-1.5 px-6 py-2.5 bg-[#33343b]/85 hover:bg-[#33343b] text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md hover:scale-[1.03] active:scale-[0.98] border border-white/10"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">restore</span>
+                                {actionLoading ? "Loading..." : "Load Example Tasks"}
+                              </button>
+                            </div>
                           </div>
                         </div>
                       )}
@@ -1399,8 +1456,16 @@ export default function App() {
                           );
                         })
                       ) : (
-                        <div className="glass-panel p-12 text-center rounded-xl">
+                        <div className="glass-panel p-12 text-center rounded-xl space-y-4">
                           <p className="text-sm text-[#c7c4d7]">No active tasks scheduled.</p>
+                          <button
+                            onClick={seedTasks}
+                            disabled={actionLoading}
+                            className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#c0c1ff]/10 border border-[#c0c1ff]/20 hover:bg-[#c0c1ff]/20 text-[#c0c1ff] font-semibold text-xs rounded-xl transition-all cursor-pointer hover:scale-[1.03] active:scale-[0.98]"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">restore</span>
+                            {actionLoading ? "Loading..." : "Load Example Tasks"}
+                          </button>
                         </div>
                       )}
                     </div>
@@ -1596,13 +1661,23 @@ export default function App() {
                               </p>
                             </div>
 
-                            <button
-                              onClick={() => setShowAddModal(true)}
-                              className="inline-flex items-center gap-1.5 px-6 py-2.5 bg-[#c0c1ff] hover:bg-[#b0b2ff] text-[#1000a9] font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md hover:scale-[1.03] active:scale-[0.98]"
-                            >
-                              <span className="material-symbols-outlined text-[16px] font-bold">add</span>
-                              Create New Goal
-                            </button>
+                            <div className="flex flex-col sm:flex-row justify-center items-center gap-3">
+                              <button
+                                onClick={() => setShowAddModal(true)}
+                                className="inline-flex items-center gap-1.5 px-6 py-2.5 bg-[#c0c1ff] hover:bg-[#b0b2ff] text-[#1000a9] font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md hover:scale-[1.03] active:scale-[0.98]"
+                              >
+                                <span className="material-symbols-outlined text-[16px] font-bold">add</span>
+                                Create New Goal
+                              </button>
+                              <button
+                                onClick={seedTasks}
+                                disabled={actionLoading}
+                                className="inline-flex items-center gap-1.5 px-6 py-2.5 bg-[#33343b]/85 hover:bg-[#33343b] text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md hover:scale-[1.03] active:scale-[0.98] border border-white/10"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">restore</span>
+                                {actionLoading ? "Loading..." : "Load Example Tasks"}
+                              </button>
+                            </div>
                           </div>
                         </div>
                       )}
@@ -2098,6 +2173,24 @@ export default function App() {
                             {geminiActive ? "CONFIGURED (Active)" : "SIMULATED FAILSAFE"}
                           </span>
                         </div>
+                      </div>
+                    </div>
+
+                    <div className="glass-panel rounded-xl p-5 space-y-4">
+                      <h3 className="font-bold text-white text-md border-b border-white/5 pb-2 flex items-center gap-2">
+                        <span className="material-symbols-outlined text-[18px]">database</span>
+                        Workspace Data Management
+                      </h3>
+                      <div className="text-xs space-y-3 leading-relaxed text-[#c7c4d7]">
+                        <p>Need to reset your focus roadmap? Populate your backlog with realistic high-priority and medium-priority academic and professional tasks.</p>
+                        <button
+                          onClick={seedTasks}
+                          disabled={actionLoading}
+                          className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#c0c1ff] hover:bg-[#b0b2ff] text-[#1000a9] font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">restore</span>
+                          {actionLoading ? "Seeding..." : "Restore Default Example Tasks"}
+                        </button>
                       </div>
                     </div>
                   </div>
