@@ -191,21 +191,32 @@ function getDefaultTasks(): Task[] {
       importance: "High",
       status: "pending",
       createdAt: new Date().toISOString(),
+      difficulty: "Hard",
+      focusRequirement: "Deep Focus",
+      energyRequirement: "High",
+      riskLevel: "Critical",
+      completionProbability: 45,
+      dependencies: [],
+      tags: ["machine-learning", "pytorch", "academic"],
+      project: "ML Course",
+      aiSummary: "Hyperparameter tuning and random forest implementation for semester project.",
+      progress: 40, // based on subtasks
       priorityScore: 98,
       priorityLabel: "High",
       priorityReasoning: "Crucial for grade (carries 20%). You historically struggle with PyTorch setup, which takes extra time.",
       subtasks: [
-        { id: "sub-1", text: "Collect Dataset (Scrape Kaggle for housing prices data)", done: true },
-        { id: "sub-2", text: "Clean Data (Handle missing values and encode categorical variables)", done: true },
-        { id: "sub-3", text: "Train Model (Implement Random Forest and tune hyperparameters)", done: false },
-        { id: "sub-4", text: "Evaluate Model (Calculate RMSE and plot feature importance)", done: false },
-        { id: "sub-5", text: "Build Presentation (Create slides summarizing methodology and results)", done: false }
+        { id: "sub-1", text: "Collect Dataset (Scrape Kaggle for housing prices data)", done: true, estimatedMinutes: 30, difficulty: "Easy", priority: "Low", dependencies: [], executionOrder: 1 },
+        { id: "sub-2", text: "Clean Data (Handle missing values and encode categorical variables)", done: true, estimatedMinutes: 45, difficulty: "Medium", priority: "Medium", dependencies: ["sub-1"], executionOrder: 2 },
+        { id: "sub-3", text: "Train Model (Implement Random Forest and tune hyperparameters)", done: false, estimatedMinutes: 45, difficulty: "Hard", priority: "High", dependencies: ["sub-2"], executionOrder: 3 },
+        { id: "sub-4", text: "Evaluate Model (Calculate RMSE and plot feature importance)", done: false, estimatedMinutes: 30, difficulty: "Medium", priority: "Medium", dependencies: ["sub-3"], executionOrder: 4 },
+        { id: "sub-5", text: "Build Presentation (Create slides summarizing methodology and results)", done: false, estimatedMinutes: 30, difficulty: "Easy", priority: "Medium", dependencies: ["sub-4"], executionOrder: 5 }
       ],
       aiBreakdownInsight: "Based on your historical project pacing, model training usually requires multiple iterations. Starting this now ensures you have sufficient buffer time for hyperparameter tuning before the deadline.",
       suggestedResource: {
         title: "Scikit-Learn Ensemble Methods",
         readTime: "5 mins"
-      }
+      },
+      contextNotes: "To resume ML Deep Focus block: Open your development workspace, load the PyTorch data loaders, and inspect the validation/training logs of your last run. Start by refactoring or writing the first core utility function for 10 minutes to rebuild flow."
     },
     {
       id: "task-2",
@@ -216,12 +227,23 @@ function getDefaultTasks(): Task[] {
       importance: "High",
       status: "pending",
       createdAt: new Date().toISOString(),
+      difficulty: "Medium",
+      focusRequirement: "High Focus",
+      energyRequirement: "High",
+      riskLevel: "Medium",
+      completionProbability: 70,
+      dependencies: [],
+      tags: ["career", "interview", "resume"],
+      project: "Job Hunt",
+      aiSummary: "Prep for technical internship panel next week.",
+      progress: 0,
       priorityScore: 85,
       priorityLabel: "High",
       priorityReasoning: "Important career milestone with upcoming panel interviews. Good prep boosts confidence.",
       subtasks: null,
       aiBreakdownInsight: null,
-      suggestedResource: null
+      suggestedResource: null,
+      contextNotes: "To resume career prep: Clear your desk, open your STAR method templates, and review your top achievements outline. Re-read your key project summary out loud once to immediately regain conversational momentum."
     },
     {
       id: "task-3",
@@ -232,6 +254,16 @@ function getDefaultTasks(): Task[] {
       importance: "Medium",
       status: "pending",
       createdAt: new Date().toISOString(),
+      difficulty: "Easy",
+      focusRequirement: "Medium Focus",
+      energyRequirement: "Medium",
+      riskLevel: "Low",
+      completionProbability: 95,
+      dependencies: [],
+      tags: ["sync", "planning"],
+      project: "Productivity",
+      aiSummary: "A quick synchronization to check focus direction.",
+      progress: 0,
       priorityScore: 60,
       priorityLabel: "Medium",
       priorityReasoning: "A quick sync ensures high focus alignment, avoiding redundant engineering work.",
@@ -248,6 +280,16 @@ function getDefaultTasks(): Task[] {
       importance: "High",
       status: "pending",
       createdAt: new Date().toISOString(),
+      difficulty: "Hard",
+      focusRequirement: "Deep Focus",
+      energyRequirement: "High",
+      riskLevel: "High",
+      completionProbability: 55,
+      dependencies: [],
+      tags: ["engineering", "coding", "testing"],
+      project: "Project X",
+      aiSummary: "Writing tests and optimizing code algorithms.",
+      progress: 0,
       priorityScore: 90,
       priorityLabel: "High",
       priorityReasoning: "Deep work block. Essential to make steady architecture progress without distractions.",
@@ -264,6 +306,16 @@ function getDefaultTasks(): Task[] {
       importance: "Medium",
       status: "pending",
       createdAt: new Date().toISOString(),
+      difficulty: "Medium",
+      focusRequirement: "High Focus",
+      energyRequirement: "Medium",
+      riskLevel: "Medium",
+      completionProbability: 80,
+      dependencies: ["task-1"], // depends on ML assignment
+      tags: ["machine-learning", "validation"],
+      project: "ML Course",
+      aiSummary: "Final evaluations and validation matrices.",
+      progress: 0,
       priorityScore: 75,
       priorityLabel: "High",
       priorityReasoning: "Validating performance is essential before presentation preparation.",
@@ -381,6 +433,20 @@ app.post("/api/tasks", async (req, res) => {
       importance,
       status: "pending",
       createdAt: new Date().toISOString(),
+      
+      // Smart Task System additions
+      difficulty: req.body.difficulty || "Medium",
+      focusRequirement: req.body.focusRequirement || "Medium Focus",
+      energyRequirement: req.body.energyRequirement || "Medium",
+      riskLevel: req.body.riskLevel || "Low",
+      completionProbability: req.body.completionProbability !== undefined ? Number(req.body.completionProbability) : 75,
+      dependencies: Array.isArray(req.body.dependencies) ? req.body.dependencies : [],
+      tags: Array.isArray(req.body.tags) ? req.body.tags : [],
+      project: req.body.project || "General",
+      aiSummary: req.body.aiSummary || null,
+      progress: req.body.progress !== undefined ? Number(req.body.progress) : 0,
+      contextNotes: req.body.contextNotes || null,
+
       priorityScore: null,
       priorityLabel: null,
       priorityReasoning: null,
@@ -424,6 +490,30 @@ app.put("/api/tasks/:id", async (req, res) => {
     if (req.body.estimatedMinutes !== undefined) currentTask.estimatedMinutes = Number(req.body.estimatedMinutes);
     if (req.body.importance !== undefined) currentTask.importance = req.body.importance;
     if (req.body.status !== undefined) currentTask.status = req.body.status;
+    
+    // Smart Task updates
+    if (req.body.difficulty !== undefined) currentTask.difficulty = req.body.difficulty;
+    if (req.body.focusRequirement !== undefined) currentTask.focusRequirement = req.body.focusRequirement;
+    if (req.body.energyRequirement !== undefined) currentTask.energyRequirement = req.body.energyRequirement;
+    if (req.body.riskLevel !== undefined) currentTask.riskLevel = req.body.riskLevel;
+    if (req.body.completionProbability !== undefined) currentTask.completionProbability = Number(req.body.completionProbability);
+    if (req.body.dependencies !== undefined) currentTask.dependencies = req.body.dependencies;
+    if (req.body.tags !== undefined) currentTask.tags = req.body.tags;
+    if (req.body.project !== undefined) currentTask.project = req.body.project;
+    if (req.body.aiSummary !== undefined) currentTask.aiSummary = req.body.aiSummary;
+    if (req.body.contextNotes !== undefined) currentTask.contextNotes = req.body.contextNotes;
+    if (req.body.progress !== undefined) {
+      currentTask.progress = Number(req.body.progress);
+    } else if (req.body.subtasks !== undefined) {
+      // Auto compute progress from subtasks if provided and progress not explicitly set
+      if (req.body.subtasks === null || req.body.subtasks.length === 0) {
+        currentTask.progress = currentTask.status === "completed" ? 100 : 0;
+      } else {
+        const completed = req.body.subtasks.filter((sub: any) => sub.done).length;
+        currentTask.progress = Math.round((completed / req.body.subtasks.length) * 100);
+      }
+    }
+
     if (req.body.subtasks !== undefined) {
       if (req.body.subtasks === null) {
         currentTask.subtasks = null;
@@ -654,6 +744,80 @@ app.post("/api/tasks/:id/breakdown", async (req, res) => {
   }
 });
 
+// 6b. Generate Context Resumption Notes for deep focus switching
+app.post("/api/tasks/:id/context-notes", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const task = tasks.find(t => t.id === id);
+    if (!task) {
+      return res.status(404).json({ error: "Task not found" });
+    }
+
+    if (!ai) {
+      const notes = simulateContextNotes(task.title, task.description || "", task.importance);
+      task.contextNotes = notes;
+      return res.json(task);
+    }
+
+    const cleanTitle = sanitizeInput(task.title, 100);
+    const cleanDescription = sanitizeInput(task.description, 500);
+
+    const prompt = `Synthesize a highly effective, concise context-switching "resumption note" (maximum 2-3 sentences or bullet points) for the following task:
+    Task Title: "${cleanTitle}"
+    Task Description: "${cleanDescription}"
+    Focus Requirement: "${task.focusRequirement || "Deep Focus"}"
+    Importance: "${task.importance}"
+
+    This resumption note must help a busy user quickly rebuild their cognitive state and overcome starting friction when switching into a deep focus session for this task. It should tell them exactly how to prepare their mental workspace and the very first micro-action to take. Keep it specific, practical, action-oriented, and highly encouraging. Do NOT include generic filler.
+    Return JSON matching the schema precisely.`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            contextNotes: { type: Type.STRING, description: "A concise 2-3 sentence resumption note helping with context switching and mental preparation" }
+          },
+          required: ["contextNotes"]
+        }
+      }
+    });
+
+    const parsed = JSON.parse(response.text || "{}");
+    task.contextNotes = sanitizeInput(parsed.contextNotes, 500) || simulateContextNotes(task.title, task.description || "", task.importance);
+
+    res.json(task);
+  } catch (error: any) {
+    console.error("Context notes generation failed:", sanitizeError(error));
+    const task = tasks.find(t => t.id === req.params.id);
+    if (task) {
+      task.contextNotes = simulateContextNotes(task.title, task.description || "", task.importance);
+      return res.json(task);
+    }
+    res.status(500).json({ error: "Failed to generate context notes. Fallback simulation triggered." });
+  }
+});
+
+// Helper for offline context notes simulation
+function simulateContextNotes(title: string, description: string, importance: string): string {
+  const lowerTitle = title.toLowerCase();
+  
+  if (lowerTitle.includes("ml") || lowerTitle.includes("pytorch") || lowerTitle.includes("model") || lowerTitle.includes("assignment")) {
+    return "To resume ML Deep Focus block: Open your development workspace, load the PyTorch data loaders, and inspect the validation/training logs of your last run. Start by refactoring or writing the first core utility function for 10 minutes to rebuild flow.";
+  }
+  if (lowerTitle.includes("interview") || lowerTitle.includes("internship") || lowerTitle.includes("career") || lowerTitle.includes("resume")) {
+    return "To resume career prep: Clear your desk, open your STAR method templates, and review your top achievements outline. Re-read your key project summary out loud once to immediately regain conversational momentum.";
+  }
+  if (lowerTitle.includes("planner") || lowerTitle.includes("schedule") || lowerTitle.includes("align")) {
+    return "To resume sync: Open your calendar sidebar and list out your absolute high priority constraints. Write down the single biggest bottleneck you want to solve today before drafting any secondary tasks.";
+  }
+  
+  return `To resume "${title}": Close all irrelevant browser tabs, review your subtasks checklist for 2 minutes to eliminate activation energy, and tackle the absolute smallest micro-action first. You've got this!`;
+}
+
 // 7. Reccommend "What Should I Do Right Now?"
 app.post("/api/tasks/what-now", async (req, res) => {
   try {
@@ -799,8 +963,347 @@ app.post("/api/tasks/generate-plan", async (req, res) => {
 
     res.json({ responseText, suggestedTasks });
   } catch (error: any) {
-    console.error("Generate plan failed:", sanitizeError(error));
-    res.status(500).json({ error: "Failed to generate plan suggestions. Please refine your prompt." });
+    console.error("Generate plan failed, executing offline heuristic fallback:", sanitizeError(error));
+    
+    // Smart heuristic mapping based on user's input prompt
+    const promptLower = (req.body.prompt || "").toLowerCase();
+    let responseText = "Here are a few customized tasks compiled by Life Saver offline planning heuristic:";
+    let suggestedTasks: Array<{ title: string; estimatedMinutes: number; importance: "Low" | "Medium" | "High"; description: string }> = [
+      {
+        title: "Review Priority Task Assignments",
+        estimatedMinutes: 30,
+        importance: "Medium",
+        description: "Review current task requirements, check deadlines, and organize sequence of actions."
+      },
+      {
+        title: "Productivity Buffer Time",
+        estimatedMinutes: 45,
+        importance: "Low",
+        description: "Take a quiet, structured buffer block to rest and align your next mental sprint."
+      }
+    ];
+
+    if (promptLower.includes("ml") || promptLower.includes("pytorch") || promptLower.includes("model") || promptLower.includes("train")) {
+      responseText = "Your custom ML optimization plan is ready (Offline mode):";
+      suggestedTasks = [
+        {
+          title: "Refactor Training Loops",
+          estimatedMinutes: 60,
+          importance: "High" as const,
+          description: "Verify batch structures, learning rate decay setups, and metric logs before running long tuning steps."
+        },
+        {
+          title: "Verify Test Loss Convergence",
+          estimatedMinutes: 45,
+          importance: "Medium" as const,
+          description: "Analyze cross-validation errors and make sure validation loss isn't diverging early."
+        }
+      ];
+    } else if (promptLower.includes("interview") || promptLower.includes("job") || promptLower.includes("career") || promptLower.includes("resume") || promptLower.includes("prep")) {
+      responseText = "Your career preparation roadmap is ready (Offline mode):";
+      suggestedTasks = [
+        {
+          title: "Draft STAR Stories",
+          estimatedMinutes: 60,
+          importance: "High" as const,
+          description: "Draft 3 technical case studies highlighting problem resolution, architectural choices, and team collaboration."
+        },
+        {
+          title: "Mock Technical Review",
+          estimatedMinutes: 45,
+          importance: "Medium" as const,
+          description: "Perform simulated coding walkthrough explaining data structures, memory limits, and runtime complexities."
+        }
+      ];
+    } else if (promptLower.includes("design") || promptLower.includes("ui") || promptLower.includes("css") || promptLower.includes("tailwind")) {
+      responseText = "Your UI design/styling plan is ready (Offline mode):";
+      suggestedTasks = [
+        {
+          title: "Review Typographic Scales",
+          estimatedMinutes: 30,
+          importance: "Medium" as const,
+          description: "Optimize title tracking, line heights, and margins to establish visual rhythms across main screens."
+        },
+        {
+          title: "Refactor Color Contrast Accents",
+          estimatedMinutes: 45,
+          importance: "High" as const,
+          description: "Verify contrast safety on all active buttons, badge elements, and text banners."
+        }
+      ];
+    }
+
+    res.json({ responseText, suggestedTasks });
+  }
+});
+
+// Helper offline command parser
+function parseCommandOffline(prompt: string): { action: string; responseText: string; extractedData: any } {
+  const lower = prompt.toLowerCase();
+  
+  // 1. Focus session
+  if (lower.includes("focus") || lower.includes("pomodoro") || lower.includes("session")) {
+    let duration = 25;
+    const match = lower.match(/(\d+)\s*(minute|min|hour|h)/);
+    if (match) {
+      const num = parseInt(match[1]);
+      if (lower.includes("hour") || match[2].startsWith("h")) {
+        duration = num * 60;
+      } else {
+        duration = num;
+      }
+    }
+    return {
+      action: "start_focus_session",
+      responseText: `Starting a ${duration}-minute focus session. Let's make every second count.`,
+      extractedData: { duration }
+    };
+  }
+
+  // 2. Plan day
+  if (lower.includes("plan my day") || lower.includes("plan day") || lower.includes("start my day")) {
+    return {
+      action: "plan_day",
+      responseText: "Let's plan your day. Sifting through your tasks to arrange the perfect execution sequence.",
+      extractedData: {}
+    };
+  }
+
+  // 3. Move low priority tasks
+  if (lower.includes("move") || lower.includes("reschedule") || lower.includes("postpone")) {
+    let importance: "Low" | "Medium" | "High" | "all" = "all";
+    if (lower.includes("low")) importance = "Low";
+    if (lower.includes("medium")) importance = "Medium";
+    if (lower.includes("high")) importance = "High";
+    
+    let targetDay = "Friday";
+    if (lower.includes("tomorrow")) targetDay = "tomorrow";
+    else if (lower.includes("monday")) targetDay = "Monday";
+    else if (lower.includes("tuesday")) targetDay = "Tuesday";
+    else if (lower.includes("wednesday")) targetDay = "Wednesday";
+    else if (lower.includes("thursday")) targetDay = "Thursday";
+    else if (lower.includes("friday")) targetDay = "Friday";
+    else if (lower.includes("saturday")) targetDay = "Saturday";
+    else if (lower.includes("sunday")) targetDay = "Sunday";
+
+    return {
+      action: "move_tasks",
+      responseText: `Rescheduling ${importance === "all" ? "all" : importance + " priority"} tasks to ${targetDay}.`,
+      extractedData: { importance, targetDay }
+    };
+  }
+
+  // 4. Generate weekly schedule
+  if (lower.includes("weekly") || lower.includes("week schedule") || lower.includes("plan my week")) {
+    return {
+      action: "generate_weekly_schedule",
+      responseText: "Generating your weekly productivity blueprint.",
+      extractedData: {}
+    };
+  }
+
+  // 5. Show overdue tasks
+  if (lower.includes("overdue") || lower.includes("missed") || lower.includes("late")) {
+    return {
+      action: "show_overdue",
+      responseText: "Filtering for overdue tasks. Let's get these bottlenecked items resolved.",
+      extractedData: {}
+    };
+  }
+
+  // 6. Summarize progress
+  if (lower.includes("summarize") || lower.includes("summary") || lower.includes("progress")) {
+    return {
+      action: "summarize_progress",
+      responseText: "Analyzing your productivity throughput, focus session history, and completed tasks for today's summary.",
+      extractedData: {}
+    };
+  }
+
+  // 7. Create task
+  if (lower.includes("create") || lower.includes("add") || lower.includes("task") || lower.includes("todo")) {
+    // Extract title
+    let title = "New Task";
+    const cleanPrompt = prompt.replace(/create a task to|create task|add task|add todo|create todo/i, "").trim();
+    const titleMatch = cleanPrompt.match(/^[^.?!,;]+/);
+    if (titleMatch) {
+      title = titleMatch[0].trim();
+    }
+    
+    // Clean up typical trailing details like "tomorrow"
+    title = title.replace(/\b(tomorrow|today|before|at|by|pm|am|minutes|hours)\b.*$/i, "").trim();
+    if (!title) title = "Quick Task";
+
+    // Extract deadline
+    let deadline = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // Default tomorrow
+    if (lower.includes("today")) {
+      deadline = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(); // 4 hours from now
+    } else if (lower.includes("friday")) {
+      const d = new Date();
+      d.setDate(d.getDate() + (5 + 7 - d.getDay()) % 7);
+      d.setHours(17, 0, 0, 0);
+      deadline = d.toISOString();
+    }
+
+    // Extract minutes
+    let estimatedMinutes = 45;
+    const minMatch = lower.match(/(\d+)\s*(min|minute|hour|h)/);
+    if (minMatch) {
+      const val = parseInt(minMatch[1]);
+      if (lower.includes("hour") || minMatch[2].startsWith("h")) {
+        estimatedMinutes = val * 60;
+      } else {
+        estimatedMinutes = val;
+      }
+    }
+
+    // Extract importance
+    let importance: "Low" | "Medium" | "High" = "Medium";
+    if (lower.includes("high") || lower.includes("urgent") || lower.includes("critical") || lower.includes("important")) {
+      importance = "High";
+    } else if (lower.includes("low") || lower.includes("trivial")) {
+      importance = "Low";
+    }
+
+    return {
+      action: "create_task",
+      responseText: `Creating task "${title}" estimated at ${estimatedMinutes} minutes with ${importance} importance.`,
+      extractedData: {
+        title,
+        description: `Created via Life Saver Command Palette: ${prompt}`,
+        deadline,
+        estimatedMinutes,
+        importance,
+        difficulty: estimatedMinutes > 120 ? "Hard" : estimatedMinutes > 45 ? "Medium" : "Easy",
+        focusRequirement: estimatedMinutes > 90 ? "Deep Focus" : estimatedMinutes > 45 ? "High Focus" : "Medium Focus",
+        energyRequirement: estimatedMinutes > 90 ? "High" : estimatedMinutes > 45 ? "Medium" : "Low",
+        riskLevel: importance === "High" ? "High" : "Low",
+        tags: ["command-palette"],
+        project: "General",
+        completionProbability: 80,
+        progress: 0
+      }
+    };
+  }
+
+  // 8. General chat response
+  return {
+    action: "chat_response",
+    responseText: `I analyzed your prompt: "${prompt}". You can try asking me to "Create a task to finish my ML homework", "Plan my day", "Start a 45 min focus session", or "Summarize today's progress". How can I support your workflow?`,
+    extractedData: {}
+  };
+}
+
+// 9. AI Command endpoint for Global AI Command Palette
+app.post("/api/ai/command", async (req, res) => {
+  try {
+    const { prompt: userPrompt, currentContext } = req.body;
+    if (!userPrompt || typeof userPrompt !== "string" || userPrompt.trim() === "") {
+      return res.status(400).json({ error: "Prompt is required." });
+    }
+
+    const cleanPrompt = sanitizeInput(userPrompt, 500);
+
+    if (!ai) {
+      const offlineResult = parseCommandOffline(cleanPrompt);
+      return res.json(offlineResult);
+    }
+
+    const currentTimeIso = new Date().toISOString();
+    const systemPrompt = `You are Life Saver OS, an intelligent operating system designed to manage productivity through natural language.
+Your job is to parse the user's natural language command, identify their intent, and extract relevant parameters into a structured command response.
+Classify the intent into exactly one of the following actions:
+- "create_task": User wants to create/add/schedule a task or homework. Extract fields: title, description, deadline (ISO date string relative to current time), estimatedMinutes (integer, default 45), importance (Low/Medium/High, default Medium), difficulty (Easy/Medium/Hard), focusRequirement (Low Focus/Medium Focus/High Focus/Deep Focus), energyRequirement (Low/Medium/High), riskLevel (Low/Medium/High/Critical), tags (array of strings), project (string), subtasks (array of strings, optional).
+- "plan_day": User wants to map, schedule, or plan their day/schedule/day's agenda.
+- "start_focus_session": User wants to start a focus timer/sprint. Extract: duration (number of minutes, default 25), taskTitle (optional string name of task to focus on).
+- "move_tasks": User wants to reschedule, postpone, or move tasks. Extract: importance ("Low", "Medium", "High", or "all"), targetDay (string representing a weekday or date).
+- "generate_weekly_schedule": User wants to generate or view weekly schedule/layout.
+- "show_overdue": User wants to view missed, late, or overdue items.
+- "summarize_progress": User wants to summarize completed tasks and today's activity.
+- "schedule_meeting": User wants to schedule a meeting or event. Extract: title, time, duration.
+- "generate_checklist": Break down a task. Extract: taskTitle, subtasks.
+- "chat_response": General productivity Q&A, advice, or general conversation.
+
+Provide a highly professional and motivating 'responseText' summarizing what action you took or what you are proposing. Ensure 'action' matches one of the defined categories.
+Current Context (user viewing): ${sanitizeInput(currentContext || "dashboard", 100)}
+Current System Time: ${currentTimeIso}
+`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: cleanPrompt,
+      config: {
+        systemInstruction: systemPrompt,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            action: { type: Type.STRING },
+            responseText: { type: Type.STRING },
+            extractedData: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                description: { type: Type.STRING },
+                deadline: { type: Type.STRING },
+                estimatedMinutes: { type: Type.INTEGER },
+                importance: { type: Type.STRING },
+                difficulty: { type: Type.STRING },
+                focusRequirement: { type: Type.STRING },
+                energyRequirement: { type: Type.STRING },
+                riskLevel: { type: Type.STRING },
+                tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+                project: { type: Type.STRING },
+                duration: { type: Type.INTEGER },
+                taskTitle: { type: Type.STRING },
+                targetDay: { type: Type.STRING },
+                subtasks: { type: Type.ARRAY, items: { type: Type.STRING } }
+              }
+            }
+          },
+          required: ["action", "responseText"]
+        }
+      }
+    });
+
+    const parsed = JSON.parse(response.text || "{}");
+    const action = sanitizeInput(parsed.action, 50) || "chat_response";
+    const responseText = sanitizeInput(parsed.responseText, 500) || "Processed successfully.";
+    const rawData = parsed.extractedData || {};
+
+    // Standardize extracted fields
+    const extractedData: any = { ...rawData };
+    if (extractedData.title) extractedData.title = sanitizeInput(extractedData.title, 100);
+    if (extractedData.description) extractedData.description = sanitizeInput(extractedData.description, 500);
+    if (extractedData.deadline) extractedData.deadline = sanitizeInput(extractedData.deadline);
+    if (extractedData.estimatedMinutes) extractedData.estimatedMinutes = Math.max(1, Number(extractedData.estimatedMinutes) || 45);
+    if (extractedData.importance) {
+      extractedData.importance = ["Low", "Medium", "High"].includes(extractedData.importance) ? extractedData.importance : "Medium";
+    }
+    if (extractedData.difficulty) {
+      extractedData.difficulty = ["Easy", "Medium", "Hard"].includes(extractedData.difficulty) ? extractedData.difficulty : "Medium";
+    }
+    if (extractedData.focusRequirement) {
+      extractedData.focusRequirement = ["Low Focus", "Medium Focus", "High Focus", "Deep Focus"].includes(extractedData.focusRequirement) ? extractedData.focusRequirement : "Medium Focus";
+    }
+    if (extractedData.energyRequirement) {
+      extractedData.energyRequirement = ["Low", "Medium", "High"].includes(extractedData.energyRequirement) ? extractedData.energyRequirement : "Medium";
+    }
+    if (extractedData.riskLevel) {
+      extractedData.riskLevel = ["Low", "Medium", "High", "Critical"].includes(extractedData.riskLevel) ? extractedData.riskLevel : "Low";
+    }
+    if (extractedData.tags) {
+      extractedData.tags = Array.isArray(extractedData.tags) ? extractedData.tags.map((t: any) => sanitizeInput(t, 30)) : [];
+    }
+    if (extractedData.project) {
+      extractedData.project = sanitizeInput(extractedData.project, 50) || "General";
+    }
+
+    res.json({ action, responseText, extractedData });
+  } catch (error: any) {
+    console.error("AI Command parse failed, executing offline fallback:", sanitizeError(error));
+    const offlineResult = parseCommandOffline(req.body.prompt || "");
+    res.json(offlineResult);
   }
 });
 

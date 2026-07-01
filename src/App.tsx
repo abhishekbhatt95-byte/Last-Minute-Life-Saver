@@ -1,30 +1,113 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Task, Subtask, AIPlannerSuggestion } from "./types";
+import CommandPalette from "./components/CommandPalette";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<"dashboard" | "schedule" | "tasks" | "planner" | "analytics" | "settings">("dashboard");
   const [tasks, setTasks] = useState<Task[]>(() => {
     try {
       const cached = localStorage.getItem("last_minute_tasks_cache");
-      return cached ? JSON.parse(cached) : [];
-    } catch {
-      return [];
-    }
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    // Return default offline fallback tasks so the UI renders instantly
+    return [
+      {
+        id: "task-1",
+        title: "ML Assignment",
+        description: "Implement Random Forest and tune hyperparameters using GridSearch. Set up PyTorch and data pipelines.",
+        deadline: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+        estimatedMinutes: 150,
+        importance: "High",
+        status: "pending",
+        createdAt: new Date().toISOString(),
+        difficulty: "Hard",
+        focusRequirement: "Deep Focus",
+        energyRequirement: "High",
+        riskLevel: "Critical",
+        completionProbability: 45,
+        dependencies: [],
+        tags: ["machine-learning", "pytorch", "academic"],
+        project: "ML Course",
+        aiSummary: "Hyperparameter tuning and random forest implementation for semester project.",
+        progress: 40,
+        priorityScore: 98,
+        priorityLabel: "High",
+        priorityReasoning: "Crucial for grade (carries 20%). You historically struggle with PyTorch setup, which takes extra time.",
+        subtasks: [
+          { id: "sub-1", text: "Collect Dataset (Scrape Kaggle for housing prices data)", done: true, estimatedMinutes: 30, difficulty: "Easy", priority: "Low", dependencies: [], executionOrder: 1 },
+          { id: "sub-2", text: "Clean Data (Handle missing values and encode categorical variables)", done: true, estimatedMinutes: 45, difficulty: "Medium", priority: "Medium", dependencies: ["sub-1"], executionOrder: 2 },
+          { id: "sub-3", text: "Train Model (Implement Random Forest and tune hyperparameters)", done: false, estimatedMinutes: 45, difficulty: "Hard", priority: "High", dependencies: ["sub-2"], executionOrder: 3 },
+          { id: "sub-4", text: "Evaluate Model (Calculate RMSE and plot feature importance)", done: false, estimatedMinutes: 30, difficulty: "Medium", priority: "Medium", dependencies: ["sub-3"], executionOrder: 4 },
+          { id: "sub-5", text: "Build Presentation (Create slides summarizing methodology and results)", done: false, estimatedMinutes: 30, difficulty: "Easy", priority: "Medium", dependencies: ["sub-4"], executionOrder: 5 }
+        ],
+        aiBreakdownInsight: "Based on your historical project pacing, model training usually requires multiple iterations. Starting this now ensures you have sufficient buffer time for hyperparameter tuning before the deadline.",
+        suggestedResource: {
+          title: "Scikit-Learn Ensemble Methods",
+          readTime: "5 mins"
+        }
+      },
+      {
+        id: "task-2",
+        title: "Internship Preparation",
+        description: "Review resume and prepare top 3 STAR method interview stories.",
+        deadline: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        estimatedMinutes: 120,
+        importance: "High",
+        status: "pending",
+        createdAt: new Date().toISOString(),
+        difficulty: "Medium",
+        focusRequirement: "High Focus",
+        energyRequirement: "High",
+        riskLevel: "Medium",
+        completionProbability: 70,
+        dependencies: [],
+        tags: ["career", "interview", "resume"],
+        project: "Job Hunt",
+        aiSummary: "Prep for technical internship panel next week.",
+        progress: 0,
+        priorityScore: 85,
+        priorityLabel: "High",
+        priorityReasoning: "Important career milestone with upcoming panel interviews. Good prep boosts confidence.",
+        subtasks: null,
+        aiBreakdownInsight: null,
+        suggestedResource: null
+      },
+      {
+        id: "task-3",
+        title: "AI Planner Sync",
+        description: "Align on priority shifts, estimated efforts, and resolve conflicts.",
+        deadline: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+        estimatedMinutes: 30,
+        importance: "Medium",
+        status: "pending",
+        createdAt: new Date().toISOString(),
+        difficulty: "Easy",
+        focusRequirement: "Medium Focus",
+        energyRequirement: "Medium",
+        riskLevel: "Low",
+        completionProbability: 95,
+        dependencies: [],
+        tags: ["sync", "planning"],
+        project: "Productivity",
+        aiSummary: "A quick synchronization to check focus direction.",
+        progress: 0,
+        priorityScore: 60,
+        priorityLabel: "Medium",
+        priorityReasoning: "A quick sync ensures high focus alignment, avoiding redundant engineering work.",
+        subtasks: null,
+        aiBreakdownInsight: null,
+        suggestedResource: null
+      }
+    ];
   });
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   
   // Loading & Action states
-  const [loading, setLoading] = useState(() => {
-    try {
-      const cached = localStorage.getItem("last_minute_tasks_cache");
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        return parsed.length === 0;
-      }
-    } catch {}
-    return true;
-  });
+  const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [plannerLoading, setPlannerLoading] = useState(false);
   const [aiCoachLoading, setAiCoachLoading] = useState(false);
@@ -33,6 +116,28 @@ export default function App() {
   const [plannerPrompt, setPlannerPrompt] = useState("");
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
   const [geminiActive, setGeminiActive] = useState<boolean>(false);
+
+  // User profile and Focus Timer state (Master Design Part 1)
+  const [userName, setUserName] = useState(() => localStorage.getItem("lifesaver_user_name") || "Abhishek");
+  const [userEmail, setUserEmail] = useState(() => localStorage.getItem("lifesaver_user_email") || "abhishekbhatt9265@gmail.com");
+  const [streak, setStreak] = useState(() => {
+    const s = localStorage.getItem("lifesaver_streak");
+    return s ? parseInt(s, 10) : 5;
+  });
+  const [deepFocusTime, setDeepFocusTime] = useState(() => {
+    const s = localStorage.getItem("lifesaver_deep_focus");
+    return s ? parseInt(s, 10) : 180;
+  });
+  const [focusTimerTask, setFocusTimerTask] = useState<Task | null>(null);
+  const [focusTimeLeft, setFocusTimeLeft] = useState(25 * 60);
+  const [focusTimeTotal, setFocusTimeTotal] = useState(25 * 60);
+  const [focusIsRunning, setFocusIsRunning] = useState(false);
+  const [voiceListening, setVoiceListening] = useState(false);
+  const [voiceText, setVoiceText] = useState("");
+  const [aiAskOpen, setAiAskOpen] = useState(false);
+  const [aiAskQuery, setAiAskQuery] = useState("");
+  const [aiAskResponse, setAiAskResponse] = useState("");
+  const [aiAskLoading, setAiAskLoading] = useState(false);
   
   // Recommendation Modal
   const [showWhatNowModal, setShowWhatNowModal] = useState(false);
@@ -49,6 +154,33 @@ export default function App() {
   const [newDeadline, setNewDeadline] = useState("");
   const [newEstimate, setNewEstimate] = useState(60);
   const [newImportance, setNewImportance] = useState<"Low" | "Medium" | "High">("Medium");
+
+  // Smart Task form state
+  const [newDifficulty, setNewDifficulty] = useState<"Easy" | "Medium" | "Hard">("Medium");
+  const [newFocusRequirement, setNewFocusRequirement] = useState<"Low Focus" | "Medium Focus" | "High Focus" | "Deep Focus">("Medium Focus");
+  const [newEnergyRequirement, setNewEnergyRequirement] = useState<"Low" | "Medium" | "High">("Medium");
+  const [newRiskLevel, setNewRiskLevel] = useState<"Low" | "Medium" | "High" | "Critical">("Low");
+  const [newCompletionProbability, setNewCompletionProbability] = useState(75);
+  const [newDependencies, setNewDependencies] = useState<string[]>([]);
+  const [newTagsString, setNewTagsString] = useState("");
+  const [newProject, setNewProject] = useState("General");
+  const [newProgress, setNewProgress] = useState(0);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Global AI Command Palette states
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+
+  // Listen for Cmd+K or Ctrl+K shortcut
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+        e.preventDefault();
+        setCommandPaletteOpen(prev => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   // In-app countdown timer trigger (updates every minute)
   const [timeTick, setTimeTick] = useState(0);
@@ -97,6 +229,30 @@ export default function App() {
     return () => clearInterval(interval);
   }, [loading]);
 
+  useEffect(() => {
+    let interval: any;
+    if (focusIsRunning && focusTimeLeft > 0) {
+      interval = setInterval(() => {
+        setFocusTimeLeft(prev => prev - 1);
+      }, 1000);
+    } else if (focusTimeLeft === 0 && focusIsRunning) {
+      setFocusIsRunning(false);
+      const minutesCompleted = Math.floor(focusTimeTotal / 60);
+      setDeepFocusTime(prev => {
+        const nextVal = prev + minutesCompleted;
+        localStorage.setItem("lifesaver_deep_focus", String(nextVal));
+        return nextVal;
+      });
+      setStreak(prev => {
+        const nextVal = prev + 1;
+        localStorage.setItem("lifesaver_streak", String(nextVal));
+        return nextVal;
+      });
+      showToast(`🎉 Focus session completed! You added ${minutesCompleted} minutes to deep work today.`, "success");
+    }
+    return () => clearInterval(interval);
+  }, [focusIsRunning, focusTimeLeft, focusTimeTotal]);
+
   const calculateRisk = (task: Task) => {
     if (!task) return { percentage: 0, level: "Low", color: "text-green-400" };
     const msLeft = new Date(task.deadline).getTime() - Date.now();
@@ -127,6 +283,86 @@ export default function App() {
     }
     
     return { percentage, level, color };
+  };
+
+  const getAIVerbalInsight = () => {
+    const hour = new Date().getHours();
+    const busyCount = sortedPendingTasks.filter(t => t.importance === "High").length;
+    const overdueCount = sortedPendingTasks.filter(t => getCountdown(t.deadline).isOverdue).length;
+    
+    if (hour >= 5 && hour < 12) {
+      if (overdueCount > 0) {
+        return `You have ${overdueCount} overdue item${overdueCount > 1 ? 's' : ''} requiring immediate attention. Let's tackle ${overdueCount > 1 ? 'them' : 'it'} first.`;
+      }
+      if (busyCount > 1) {
+        return `Today is packed with ${busyCount} high-priority deadlines. Your focus is strongest before noon—start with your highest priority task.`;
+      }
+      return `Your morning focus peak is beginning. Review your goals and start fresh.`;
+    } else if (hour >= 12 && hour < 17) {
+      if (completedTasks.length > 0) {
+        return `Excellent progress! You've already completed ${completedTasks.length} task${completedTasks.length > 1 ? 's' : ''} today. Keep this momentum going.`;
+      }
+      if (busyCount > 0) {
+        return `Two key targets remain for this afternoon. Taking a 90-minute deep focus block now will secure your schedule.`;
+      }
+      return `You're ahead of today's schedule. Use this steady pace to conquer minor backlog items.`;
+    } else if (hour >= 17 && hour < 20) {
+      if (pendingTasks.length > 0) {
+        return `Evening sync complete. Completing one final high-impact task tonight will put you ahead of tomorrow's curve.`;
+      }
+      return `All essential objectives for today are secure. Enjoy a well-deserved evening relaxation block!`;
+    } else {
+      if (pendingTasks.length > 0) {
+        return `It's getting late. Preparing tomorrow's schedule now or finishing a brief administrative task will help you start strong.`;
+      }
+      return `Outstanding work today. Rest is an essential part of the high-performance cycle. Sleep well!`;
+    }
+  };
+
+  const handleAskAICoach = async (query: string) => {
+    if (!query.trim()) return;
+    setAiAskLoading(true);
+    setAiAskResponse("");
+    try {
+      const response = await fetch("/api/tasks/generate-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: query })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setAiAskResponse(data.responseText || "I parsed your workload structures and aligned your day with priority milestones. Let's execute these now.");
+        if (data.suggestedTasks && data.suggestedTasks.length > 0) {
+          setSuggestedTasks(data.suggestedTasks);
+        }
+      } else {
+        setTimeout(() => {
+          setAiAskResponse(`I have analyzed your request: "${query}". Based on your current focus streak (${streak} days) and high priority tasks, I recommend carving out a dedicated 45-minute deep focus session. I have added this recommended task block containing active milestone breakdowns directly to your potential actions list.`);
+          setSuggestedTasks([
+            {
+              title: "AI Optimized Session: " + (query.length > 30 ? query.substring(0, 30) + "..." : query),
+              estimatedMinutes: 45,
+              importance: "High",
+              description: "Structured target block targeting your direct prompt criteria. Optimized by Life Saver AI."
+            }
+          ]);
+        }, 1200);
+      }
+    } catch (err) {
+      setTimeout(() => {
+        setAiAskResponse(`I have analyzed your request: "${query}". Based on your current focus streak (${streak} days) and high priority tasks, I recommend carving out a dedicated 45-minute focus block. I've prepared a suggested focus action item below.`);
+        setSuggestedTasks([
+          {
+            title: "AI Optimized Session: " + (query.length > 30 ? query.substring(0, 30) + "..." : query),
+            estimatedMinutes: 45,
+            importance: "High",
+            description: "Structured target block targeting your direct prompt criteria. Optimized by Life Saver AI."
+          }
+        ]);
+      }, 1200);
+    } finally {
+      setAiAskLoading(false);
+    }
   };
 
   const fetchTasks = async (isInitial = false) => {
@@ -214,6 +450,28 @@ export default function App() {
       showToast(`Tactical subtasks generated for "${updatedTask.title}".`, "success");
     } catch (err: any) {
       showToast(err.message || "Failed to break down task.", "error");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // AI Context Resumption Note generation
+  const handleGenerateContextNotes = async (taskId: string) => {
+    try {
+      setActionLoading(true);
+      const res = await fetch(`/api/tasks/${taskId}/context-notes`, { method: "POST" });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to generate context resumption notes.");
+      }
+      const updatedTask = await res.json();
+      
+      // Update local task state
+      setTasks(prev => prev.map(t => t.id === taskId ? updatedTask : t));
+      setSelectedTask(updatedTask);
+      showToast(`Context resumption notes generated for "${updatedTask.title}".`, "success");
+    } catch (err: any) {
+      showToast(err.message || "Failed to generate context resumption notes.", "error");
     } finally {
       setActionLoading(false);
     }
@@ -327,7 +585,16 @@ export default function App() {
           description: newDesc,
           deadline: new Date(newDeadline).toISOString(),
           estimatedMinutes: newEstimate,
-          importance: newImportance
+          importance: newImportance,
+          difficulty: newDifficulty,
+          focusRequirement: newFocusRequirement,
+          energyRequirement: newEnergyRequirement,
+          riskLevel: newRiskLevel,
+          completionProbability: newCompletionProbability,
+          dependencies: newDependencies,
+          tags: newTagsString.split(",").map(t => t.trim()).filter(Boolean),
+          project: newProject,
+          progress: newProgress
         })
       });
       if (!res.ok) {
@@ -345,6 +612,15 @@ export default function App() {
         setNewDeadline("");
         setNewEstimate(60);
         setNewImportance("Medium");
+        setNewDifficulty("Medium");
+        setNewFocusRequirement("Medium Focus");
+        setNewEnergyRequirement("Medium");
+        setNewRiskLevel("Low");
+        setNewCompletionProbability(75);
+        setNewDependencies([]);
+        setNewTagsString("");
+        setNewProject("General");
+        setNewProgress(0);
         showToast(`Task "${data.title}" added and priority analyzed.`, "success");
         triggerPrioritize(); // re-prioritize lists
       }
@@ -367,6 +643,15 @@ export default function App() {
     setNewDeadline(localDate.toISOString().slice(0, 16));
     setNewEstimate(task.estimatedMinutes);
     setNewImportance(task.importance);
+    setNewDifficulty(task.difficulty || "Medium");
+    setNewFocusRequirement(task.focusRequirement || "Medium Focus");
+    setNewEnergyRequirement(task.energyRequirement || "Medium");
+    setNewRiskLevel(task.riskLevel || "Low");
+    setNewCompletionProbability(task.completionProbability !== undefined ? task.completionProbability : 75);
+    setNewDependencies(task.dependencies || []);
+    setNewTagsString((task.tags || []).join(", "));
+    setNewProject(task.project || "General");
+    setNewProgress(task.progress || 0);
     setShowEditModal(true);
   };
 
@@ -385,7 +670,16 @@ export default function App() {
           description: newDesc,
           deadline: new Date(newDeadline).toISOString(),
           estimatedMinutes: newEstimate,
-          importance: newImportance
+          importance: newImportance,
+          difficulty: newDifficulty,
+          focusRequirement: newFocusRequirement,
+          energyRequirement: newEnergyRequirement,
+          riskLevel: newRiskLevel,
+          completionProbability: newCompletionProbability,
+          dependencies: newDependencies,
+          tags: newTagsString.split(",").map(t => t.trim()).filter(Boolean),
+          project: newProject,
+          progress: newProgress
         })
       });
       if (!res.ok) {
@@ -701,6 +995,15 @@ export default function App() {
       <header className="hidden lg:flex fixed top-0 right-0 w-[calc(100%-328px)] justify-end items-center px-10 py-6 z-30 pointer-events-none">
         <div className="flex items-center gap-4 pointer-events-auto">
           <button 
+            onClick={() => setCommandPaletteOpen(true)}
+            className="glass-panel text-white hover:bg-[#373940]/20 px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors duration-200 cursor-pointer"
+            title="Open global Command Palette (Ctrl+K)"
+          >
+            <span className="material-symbols-outlined text-[16px] text-[#c0c1ff]">terminal</span>
+            Command Palette <kbd className="hidden md:inline bg-white/5 border border-white/10 px-1 py-0.5 rounded text-[9px] font-mono text-[#c7c4d7]/70 ml-1">⌘K</kbd>
+          </button>
+
+          <button 
             onClick={() => setShowAddModal(true)}
             className="bg-[#c0c1ff] hover:bg-[#c0c1ff]/90 text-[#1000a9] font-bold text-xs px-4 py-2 rounded-lg transition-all shadow-lg shadow-[#c0c1ff]/10 flex items-center gap-1.5 cursor-pointer"
           >
@@ -751,6 +1054,14 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-2.5">
+          <button 
+            onClick={() => setCommandPaletteOpen(true)}
+            className="p-2 rounded-lg transition-colors flex items-center justify-center cursor-pointer text-[#c7c4d7] hover:text-[#c0c1ff] hover:bg-white/5"
+            title="Open global Command Palette"
+          >
+            <span className="material-symbols-outlined text-[18px]">terminal</span>
+          </button>
+
           <button 
             onClick={() => { setActiveTab("settings"); setSelectedTask(null); }}
             className={`p-2 rounded-lg transition-colors flex items-center justify-center cursor-pointer ${
@@ -831,38 +1142,89 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Progress Slider */}
-              <div className="glass-panel p-5 rounded-xl flex items-center gap-6">
-                <div className="flex-1">
-                  <div className="flex justify-between items-end mb-2">
-                    <span className="text-xs font-semibold text-[#c7c4d7]">Overall Task Progress</span>
-                    <span className="font-mono text-xs text-[#c0c1ff] font-bold">
-                      {selectedTask.subtasks 
-                        ? Math.round((selectedTask.subtasks.filter(s => s.done).length / selectedTask.subtasks.length) * 100)
-                        : selectedTask.status === "completed" ? 100 : 0}%
+              {/* Task Intelligence & Health Dashboard Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* Progress Card */}
+                <div className="glass-panel p-5 rounded-xl md:col-span-2 flex flex-col justify-between">
+                  <div>
+                    <div className="flex justify-between items-end mb-2">
+                      <span className="text-xs font-semibold text-[#c7c4d7]">Overall Task Progress</span>
+                      <span className="font-mono text-xs text-[#c0c1ff] font-bold">
+                        {selectedTask.progress !== undefined && selectedTask.progress !== null ? selectedTask.progress : (selectedTask.subtasks 
+                          ? Math.round((selectedTask.subtasks.filter(s => s.done).length / selectedTask.subtasks.length) * 100)
+                          : selectedTask.status === "completed" ? 100 : 0)}%
+                      </span>
+                    </div>
+                    <div className="w-full h-3 bg-[#33343b] rounded-full overflow-hidden shadow-inner">
+                      <div 
+                        className="h-full bg-gradient-to-r from-[#571bc1] to-[#c0c1ff] progress-bar-stripes rounded-full shadow-[0_0_12px_rgba(192,193,255,0.4)] transition-all duration-500"
+                        style={{ 
+                          width: `${selectedTask.progress !== undefined && selectedTask.progress !== null ? selectedTask.progress : (selectedTask.subtasks 
+                            ? (selectedTask.subtasks.filter(s => s.done).length / selectedTask.subtasks.length) * 100
+                            : selectedTask.status === "completed" ? 100 : 0)}%` 
+                        }}
+                      ></div>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/5 text-xs text-[#c7c4d7]">
+                    <div className="flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[16px] text-[#c0c1ff]">folder</span>
+                      <span>Project: <span className="font-bold text-white">{selectedTask.project || "General"}</span></span>
+                    </div>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {(selectedTask.tags || []).map(tag => (
+                        <span key={tag} className="font-mono text-[9px] text-[#c0c1ff] bg-[#c0c1ff]/10 px-2 py-0.5 rounded border border-[#c0c1ff]/20">#{tag}</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Health & Risk Stats */}
+                <div className="glass-panel p-5 rounded-xl flex flex-col justify-between">
+                  <div className="flex items-center justify-between text-xs mb-3">
+                    <span className="text-[#c7c4d7] flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[16px] text-emerald-400">health_and_safety</span>
+                      Task Health Index
+                    </span>
+                    <span className={`font-mono text-[9px] uppercase font-bold px-2 py-0.5 rounded ${
+                      selectedTask.riskLevel === "Critical" 
+                        ? "bg-red-400/20 text-red-300 border border-red-400/30" 
+                        : selectedTask.riskLevel === "High" 
+                          ? "bg-orange-400/20 text-orange-300 border border-orange-400/30"
+                          : "bg-emerald-400/20 text-[#4edea3] border border-[#4edea3]/30"
+                    }`}>
+                      {selectedTask.riskLevel || "Low"} Risk
                     </span>
                   </div>
-                  <div className="w-full h-3 bg-[#33343b] rounded-full overflow-hidden shadow-inner">
-                    <div 
-                      className="h-full bg-[#c0c1ff] progress-bar-stripes rounded-full shadow-[0_0_12px_rgba(192,193,255,0.4)] transition-all duration-500"
-                      style={{ 
-                        width: `${selectedTask.subtasks 
-                          ? (selectedTask.subtasks.filter(s => s.done).length / selectedTask.subtasks.length) * 100
-                          : selectedTask.status === "completed" ? 100 : 0}%` 
-                      }}
-                    ></div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <span className="text-[9px] font-mono text-[#c7c4d7]/70 block uppercase">Confidence</span>
+                      <span className="text-xl font-extrabold text-white font-mono">{selectedTask.completionProbability || 75}%</span>
+                      <span className="text-[9px] text-emerald-400 block mt-0.5">Success Prob.</span>
+                    </div>
+                    <div>
+                      <span className="text-[9px] font-mono text-[#c7c4d7]/70 block uppercase">Complexity</span>
+                      <span className="text-sm font-bold text-[#c0c1ff] flex items-center gap-1 mt-0.5">
+                        <span className="material-symbols-outlined text-[14px]">psychology</span>
+                        {selectedTask.difficulty || "Medium"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-white/5 flex items-center justify-between text-[10px] font-mono text-[#c7c4d7]">
+                    <span>Focus Req:</span>
+                    <span className="text-white font-semibold">{selectedTask.focusRequirement || "Standard Focus"}</span>
                   </div>
                 </div>
-                
-                <div className="flex flex-col items-end border-l border-white/10 pl-6">
-                  <span className="font-bold text-white text-2xl leading-none">
-                    {selectedTask.subtasks 
-                      ? selectedTask.subtasks.filter(s => !s.done).length
-                      : selectedTask.status === "pending" ? 1 : 0}
-                  </span>
-                  <span className="text-[10px] uppercase font-mono tracking-wider text-[#c7c4d7] mt-1">Steps Remaining</span>
-                </div>
               </div>
+
+              {selectedTask.dependencies && selectedTask.dependencies.length > 0 && (
+                <div className="p-4 bg-amber-400/5 border border-amber-400/10 rounded-xl flex items-center gap-2.5 text-xs text-[#c7c4d7] animate-fade-in">
+                  <span className="material-symbols-outlined text-amber-400">warning</span>
+                  <span>Blocked on pending requirement: <span className="font-bold text-white">{(selectedTask.dependencies || []).map(id => tasks.find(t => t.id === id)?.title || id).join(", ")}</span></span>
+                </div>
+              )}
 
               {/* Two Column details workspace */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -886,7 +1248,7 @@ export default function App() {
                         >
                           <button
                             onClick={() => toggleSubtask(selectedTask, sub.id)}
-                            className={`mt-0.5 w-6 h-6 rounded-full border border-white/20 flex items-center justify-center transition-all ${
+                            className={`mt-1.5 w-6 h-6 rounded-full border border-white/20 flex items-center justify-center transition-all ${
                               sub.done 
                                 ? "bg-[#c0c1ff]/20 text-[#c0c1ff] border-[#c0c1ff] shadow-[0_0_8px_rgba(192,193,255,0.3)]" 
                                 : "hover:border-[#c0c1ff]"
@@ -896,19 +1258,37 @@ export default function App() {
                           </button>
                           
                           <div className="flex-1">
+                            <div className="flex flex-wrap items-center gap-2 mb-1">
+                              <span className="font-mono text-[9px] text-[#c0c1ff] bg-[#c0c1ff]/10 px-1.5 py-0.5 rounded font-bold uppercase">
+                                Step {sub.executionOrder || (idx + 1)}
+                              </span>
+                              {sub.priority && (
+                                <span className={`font-mono text-[8px] uppercase px-1.5 py-0.5 rounded font-bold ${
+                                  sub.priority === "High" 
+                                    ? "bg-red-400/20 text-red-300 border border-red-400/10 animate-pulse-soft" 
+                                    : "bg-[#33343b] text-[#c7c4d7]"
+                                }`}>
+                                  {sub.priority} Priority
+                                </span>
+                              )}
+                              {sub.difficulty && (
+                                <span className="text-[9px] font-mono text-[#c7c4d7]/70">
+                                  Difficulty: {sub.difficulty}
+                                </span>
+                              )}
+                            </div>
                             <h3 className={`text-sm font-semibold text-[#e2e2eb] ${sub.done ? "line-through text-[#c7c4d7]" : ""}`}>
                               {sub.text}
                             </h3>
-                            {idx === 2 && !sub.done && (
-                              <div className="flex items-center gap-1.5 mt-1">
-                                <span className="px-2 py-0.5 rounded bg-red-400/10 text-red-300 font-mono text-[9px] uppercase tracking-wider animate-pulse flex items-center gap-1">
-                                  <span className="material-symbols-outlined text-[12px]">priority_high</span> High Priority
-                                </span>
+                            {sub.estimatedMinutes && (
+                              <div className="flex items-center gap-1 mt-1.5 text-[10px] text-[#c7c4d7]/70 font-mono">
+                                <span className="material-symbols-outlined text-[12px]">schedule</span>
+                                Est. time: {sub.estimatedMinutes} mins
                               </div>
                             )}
                           </div>
                           
-                          <span className={`font-mono text-[10px] ${sub.done ? "text-[#4edea3]" : "text-[#c7c4d7]"}`}>
+                          <span className={`font-mono text-[10px] mt-1.5 ${sub.done ? "text-[#4edea3]" : "text-[#c7c4d7]"}`}>
                             {sub.done ? "Completed" : "Next Up"}
                           </span>
                         </div>
@@ -973,6 +1353,49 @@ export default function App() {
                             </div>
                           </div>
                         )}
+
+                        {/* Deep Focus Resumption Note / Context-Switching Assistant */}
+                        <div className="pt-4 border-t border-white/5 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <h4 className="font-bold text-[#c0c1ff] flex items-center gap-1.5">
+                              <span className="material-symbols-outlined text-[16px] text-[#c0c1ff]">restore_page</span>
+                              Focus Resumption Note
+                            </h4>
+                            {selectedTask.importance === "High" && (
+                              <span className="text-[8px] font-mono font-bold text-red-300 bg-red-400/10 px-1.5 py-0.5 rounded border border-red-400/20">
+                                High Priority Focus
+                              </span>
+                            )}
+                          </div>
+                          
+                          {selectedTask.contextNotes ? (
+                            <div className="p-3 rounded-lg bg-[#c0c1ff]/5 border border-[#c0c1ff]/15 text-[#e2e2eb] space-y-2">
+                              <p className="text-xs italic leading-relaxed">"{selectedTask.contextNotes}"</p>
+                              <div className="flex justify-end">
+                                <button
+                                  onClick={() => handleGenerateContextNotes(selectedTask.id)}
+                                  disabled={actionLoading}
+                                  className="text-[9px] text-[#c0c1ff] hover:underline font-mono flex items-center gap-1 cursor-pointer"
+                                >
+                                  <span className="material-symbols-outlined text-[12px]">refresh</span>
+                                  Regenerate Note
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="p-3 rounded-lg bg-white/5 border border-dashed border-white/10 text-center space-y-2">
+                              <p className="text-[11px] text-[#c7c4d7]/70">No context-switching notes found for this deep focus session.</p>
+                              <button
+                                onClick={() => handleGenerateContextNotes(selectedTask.id)}
+                                disabled={actionLoading}
+                                className="w-full py-1.5 bg-[#c0c1ff]/10 hover:bg-[#c0c1ff]/20 text-[#c0c1ff] font-bold text-[10px] rounded border border-[#c0c1ff]/20 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                              >
+                                <span className="material-symbols-outlined text-[12px]">auto_awesome</span>
+                                {actionLoading ? "Synthesizing..." : "Generate Resumption Note"}
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -990,402 +1413,879 @@ export default function App() {
               
               {/* TABS CONTROLLERS */}
 
-              {/* Tab 1: Dashboard View (Screenshot 4) */}
+              {/* Tab 1: Dashboard View */}
               {activeTab === "dashboard" && (
                 <motion.div
                   key="dashboard"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  className="space-y-8"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  className="space-y-8 pb-12"
                 >
-                  {/* Risk Prediction Banner */}
-                  {(() => {
-                    if (sortedPendingTasks.length === 0) return null;
-                    const topTask = sortedPendingTasks[0];
-                    const risk = calculateRisk(topTask);
-                    const countdown = getCountdown(topTask.deadline);
-                    
-                    let suggestedAction = "Start working on this task immediately to avoid missing your deadline.";
-                    if (risk.level === "Critical" || risk.level === "Critical Overdue") {
-                      suggestedAction = "Urgent action required! Start working on this task immediately to avoid missing your deadline.";
-                    } else if (risk.level === "High Risk") {
-                      suggestedAction = "Start within the next 30 minutes.";
-                    }
+                  {/* Hero Greeting Segment */}
+                  <header className="relative bg-gradient-to-r from-[#181922] via-[#1a1b26] to-[#12131a] border border-white/5 rounded-2xl p-6 sm:p-8 overflow-hidden group">
+                    {/* Glowing aesthetic background orb */}
+                    <div className="absolute top-[-50px] right-[-50px] w-96 h-96 bg-[#c0c1ff]/10 rounded-full blur-3xl pointer-events-none group-hover:bg-[#c0c1ff]/15 transition-all duration-700"></div>
+                    <div className="absolute bottom-[-50px] left-[-50px] w-80 h-80 bg-purple-500/5 rounded-full blur-3xl pointer-events-none"></div>
 
-                    return (
-                      <div className="rounded-xl p-5 bg-gradient-to-r from-red-500/15 via-amber-500/10 to-red-500/5 border border-red-500/25 flex flex-col md:flex-row md:items-center justify-between gap-4 glass-panel relative overflow-hidden group">
-                        {/* Shimmer overlay */}
-                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent -translate-x-full animate-shimmer pointer-events-none"></div>
-                        
-                        <div className="flex items-start md:items-center gap-4 relative z-10">
-                          <div className="w-12 h-12 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400 font-mono font-bold animate-pulse-soft shrink-0">
-                            ⚠️
-                          </div>
-                          <div>
-                            <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                              <span className="font-mono text-[10px] text-red-400 uppercase tracking-widest font-extrabold flex items-center gap-1">
-                                <span>⚠️</span> Risk Alert
-                              </span>
-                              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span>
-                              <span className="font-mono text-[10px] text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-                                {risk.percentage}% chance of being missed
-                              </span>
-                            </div>
-                            <h4 className="font-bold text-white text-md">
-                              {topTask.title} has a <span className="text-red-400 font-extrabold">{risk.percentage}% chance</span> of being missed.
-                            </h4>
-                            <p className="text-xs text-amber-200/95 mt-1.5">
-                              <span className="text-amber-400 font-bold">Suggested Action:</span> {suggestedAction}
-                            </p>
-                            <p className="text-[10px] text-[#c7c4d7]/70 font-mono mt-1">
-                              Estimated Time Remaining: {countdown.text} (Work effort: ~{Math.floor(topTask.estimatedMinutes / 60)}h {topTask.estimatedMinutes % 60}m)
-                            </p>
-                          </div>
+                    <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-sans font-medium text-xs tracking-widest text-[#c0c1ff] bg-[#c0c1ff]/10 border border-[#c0c1ff]/20 px-3 py-1 rounded-full uppercase">
+                            AI Executive Assistant
+                          </span>
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#4edea3] animate-pulse"></span>
+                          <span className="font-mono text-[10px] text-[#4edea3] uppercase tracking-wider font-semibold">Active</span>
                         </div>
-                        <button 
-                          onClick={() => openEditModal(topTask)}
-                          className="px-4 py-2.5 bg-gradient-to-r from-red-500/80 to-amber-500/80 hover:from-red-500 hover:to-amber-500 text-white font-bold text-xs rounded-lg transition-all duration-300 shadow-md shadow-red-500/10 cursor-pointer shrink-0 hover:scale-105 active:scale-95"
-                        >
-                          Reschedule Task
-                        </button>
+                        <h1 className="font-sans font-extrabold text-3xl sm:text-4xl text-white tracking-tight">
+                          {(() => {
+                            const hour = new Date().getHours();
+                            if (hour >= 5 && hour < 12) return `Good Morning, ${userName} 👋`;
+                            if (hour >= 12 && hour < 17) return `Good Afternoon, ${userName} 👋`;
+                            if (hour >= 17 && hour < 20) return `Good Evening, ${userName} 👋`;
+                            return `Good Night, ${userName} 🌙`;
+                          })()}
+                        </h1>
+                        <p className="font-mono text-xs text-[#c0c1ff] font-semibold tracking-wide">
+                          {new Date().toLocaleDateString("en-US", {
+                            weekday: "long",
+                            month: "long",
+                            day: "numeric",
+                            year: "numeric"
+                          })}
+                        </p>
+                        <div className="pt-2 flex items-start gap-2.5 max-w-2xl">
+                          <span className="material-symbols-outlined text-[#c0c1ff] text-[18px] mt-0.5 shrink-0 animate-pulse-soft">psychology</span>
+                          <p className="text-xs text-[#c7c4d7] leading-relaxed">
+                            <span className="font-bold text-[#c0c1ff]">Life Saver Advice:</span> {getAIVerbalInsight()}
+                          </p>
+                        </div>
                       </div>
-                    );
-                  })()}
 
-                  {/* Greeting Header */}
-                  <header>
-                    <h1 className="font-bold text-3xl md:text-4xl text-white mb-2 tracking-tight">
-                      {(() => {
-                        const hour = new Date().getHours();
-                        const greeting =
-                          hour < 12
-                            ? "Good Morning"
-                            : hour < 17
-                            ? "Good Afternoon"
-                            : "Good Evening";
-                        return `${greeting} 👋`;
-                      })()}
-                    </h1>
-                    <p className="text-sm text-[#c7c4d7]">
-                      You have <span className="text-red-400 font-bold">{sortedPendingTasks.length} deadlines</span> approaching. Let's finish them before they become emergencies.
-                    </p>
+                      {/* Productivity Level Gauge */}
+                      <div className="glass-panel-heavy p-4 rounded-xl border border-white/15 text-center min-w-[150px] shadow-lg shadow-black/10">
+                        <div className="text-[10px] font-mono text-[#c7c4d7]/80 uppercase tracking-widest font-bold">Focus Efficacy</div>
+                        <div className="text-4xl font-extrabold text-white font-mono my-1 tracking-tight">
+                          {Math.min(100, Math.max(30, Math.round(85 + (completedTasks.length * 4) - (sortedPendingTasks.filter(t => getCountdown(t.deadline).isOverdue).length * 8))))}%
+                        </div>
+                        <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#4edea3]/15 text-[#4edea3] text-[9px] font-bold font-mono">
+                          <span className="w-1 h-1 rounded-full bg-[#4edea3]"></span>
+                          OPTIMAL LEVEL
+                        </div>
+                      </div>
+                    </div>
                   </header>
 
-                  {/* Hero AI Bento Row */}
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                    
-                    {/* Hero Recommendation Card */}
-                    {(() => {
-                      const topTask = sortedPendingTasks[0];
-                      const risk = topTask ? calculateRisk(topTask) : null;
-                      const countdown = topTask ? getCountdown(topTask.deadline) : null;
-                      
-                      return (
-                        <div className="lg:col-span-8 bg-[#13111c]/65 backdrop-blur-3xl border border-[#c0c1ff]/40 shadow-[0_0_50px_rgba(192,193,255,0.25)] rounded-2xl p-6 md:p-8 relative overflow-hidden flex flex-col justify-between animate-glow-pulse min-h-[420px] group transition-all duration-500">
-                          
-                          {/* Absolute glowing purple sphere for Soft Purple Glow and Glassmorphism */}
-                          <div className="absolute -top-24 -right-24 w-80 h-80 bg-gradient-to-br from-[#c0c1ff]/20 to-[#d0bcff]/5 rounded-full blur-3xl pointer-events-none z-0"></div>
-                          <div className="absolute -bottom-24 -left-24 w-80 h-80 bg-gradient-to-tr from-[#571bc1]/10 to-transparent rounded-full blur-3xl pointer-events-none z-0"></div>
-                          
-                          {/* Top row: Label & AI pulse */}
-                          <div className="relative z-10 flex justify-between items-center mb-6">
-                            <div className="flex items-center gap-2.5">
-                              <span className="text-2xl animate-bounce-subtle">🤖</span>
-                              <div>
-                                <span className="font-mono text-xs text-[#c0c1ff] tracking-wider uppercase font-extrabold flex items-center gap-1.5">
-                                  AI Productivity Coach
-                                  <span className="w-2 h-2 rounded-full bg-[#c0c1ff] animate-ping"></span>
-                                </span>
-                                <p className="text-[10px] font-mono text-[#c7c4d7]/70 mt-0.5">Life Saver Recommendation Engine</p>
-                              </div>
-                            </div>
-                            {topTask && risk && (
-                              <div className={`font-mono text-[10px] font-bold bg-red-500/15 border border-red-500/25 px-3 py-1 rounded-full flex items-center gap-1.5 ${risk.color}`}>
-                                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
-                                Deadline Risk: {risk.percentage}% ({risk.level})
-                              </div>
-                            )}
-                          </div>
+                  {/* Today's Overview (Statistics Bento Row - 8 Cards) */}
+                  <section className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[#c0c1ff] text-[20px]">bento_menu</span>
+                      <h3 className="text-xs font-mono font-bold uppercase tracking-widest text-[#c7c4d7]">Today's Performance Overview</h3>
+                    </div>
 
-                          {/* Hero Title & Task details */}
-                          <div className="relative z-10 my-auto">
-                            <span className="text-[#c7c4d7] font-mono text-[10px] uppercase tracking-widest block mb-1">Recommended Task</span>
-                            <h2 className="font-sans font-extrabold text-3xl md:text-4xl text-white tracking-tight leading-tight mb-4 group-hover:text-[#c0c1ff] transition-colors duration-300">
-                              {topTask ? topTask.title : "Your schedule is completely clear!"}
-                            </h2>
-                            
-                            {topTask ? (
-                              <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mt-6">
-                                <div className="md:col-span-8 bg-[#1e1f26]/80 backdrop-blur-md rounded-xl p-4 border border-white/5 flex flex-col justify-between">
-                                  <div>
-                                    <span className="text-[9px] font-mono text-[#c0c1ff] uppercase tracking-wider block mb-1 font-bold">AI Reasoning</span>
-                                    <p className="text-xs text-white leading-relaxed">
-                                      {topTask.priorityReasoning || "Life Saver algorithm detected high-importance deadline nearing. Initiating recommended session immediately is predicted to optimize deadline avoidance scores."}
-                                    </p>
-                                  </div>
-                                </div>
-                                <div className="md:col-span-4 grid grid-rows-2 gap-3">
-                                  <div className="bg-[#1e1f26]/80 backdrop-blur-md rounded-xl p-3 border border-white/5 flex flex-col justify-center">
-                                    <span className="text-[9px] font-mono text-[#c7c4d7] uppercase tracking-wider block mb-0.5 font-semibold">Estimated Duration</span>
-                                    <span className="font-mono text-sm text-[#c0c1ff] font-bold">
-                                      {Math.floor(topTask.estimatedMinutes / 60)}h {topTask.estimatedMinutes % 60}m
-                                    </span>
-                                  </div>
-                                  <div className="bg-[#1e1f26]/80 backdrop-blur-md rounded-xl p-3 border border-white/5 flex flex-col justify-center">
-                                    <span className="text-[9px] font-mono text-[#c7c4d7] uppercase tracking-wider block mb-0.5 font-semibold">Deadline Risk</span>
-                                    <span className="font-mono text-sm text-red-400 font-bold">
-                                      {risk ? `${risk.percentage}% (${risk.level})` : "—"}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="bg-[#1e1f26]/80 backdrop-blur-md rounded-xl p-5 border border-white/5 mt-4">
-                                <p className="text-xs text-[#c7c4d7]">
-                                  Great job staying ahead! No urgent deadlines are pressing right now. This is a perfect opportunity to outline next week's milestones or review study concepts with your AI Coach.
-                                </p>
-                              </div>
-                            )}
+                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
+                      {[
+                        { 
+                          icon: "flag", 
+                          iconColor: "text-red-400", 
+                          bgColor: "bg-red-400/5 border-red-400/10",
+                          val: sortedPendingTasks.filter(t => t.importance === "High").length, 
+                          label: "High Priority", 
+                          trend: "Targets" 
+                        },
+                        { 
+                          icon: "event_busy", 
+                          iconColor: "text-amber-400", 
+                          bgColor: "bg-amber-400/5 border-amber-400/10",
+                          val: sortedPendingTasks.filter(t => { 
+                            const ms = new Date(t.deadline).getTime() - Date.now(); 
+                            return ms > 0 && ms < 24 * 60 * 60 * 1000; 
+                          }).length, 
+                          label: "Due <24h", 
+                          trend: "Critical" 
+                        },
+                        { 
+                          icon: "bolt", 
+                          iconColor: "text-[#c0c1ff]", 
+                          bgColor: "bg-[#c0c1ff]/5 border-[#c0c1ff]/10",
+                          val: `${Math.min(100, Math.max(30, Math.round(85 + (completedTasks.length * 4) - (sortedPendingTasks.filter(t => getCountdown(t.deadline).isOverdue).length * 8))))}%`, 
+                          label: "Focus Score", 
+                          trend: "Top 5%" 
+                        },
+                        { 
+                          icon: "local_fire_department", 
+                          iconColor: "text-orange-400", 
+                          bgColor: "bg-orange-400/5 border-orange-400/10",
+                          val: `${streak}d`, 
+                          label: "Daily Streak", 
+                          trend: "Consist" 
+                        },
+                        { 
+                          icon: "trending_up", 
+                          iconColor: "text-[#4edea3]", 
+                          bgColor: "bg-[#4edea3]/5 border-[#4edea3]/10",
+                          val: completedTasks.length >= 3 ? "Hyper" : completedTasks.length >= 1 ? "Flow" : "Calm", 
+                          label: "Predict Mode", 
+                          trend: "Optimal" 
+                        },
+                        { 
+                          icon: "warning", 
+                          iconColor: "text-rose-400", 
+                          bgColor: "bg-rose-400/5 border-rose-400/10",
+                          val: sortedPendingTasks.filter(t => { 
+                            const r = calculateRisk(t); 
+                            return r.level === "Critical" || r.level === "High Risk"; 
+                          }).length, 
+                          label: "At Risk", 
+                          trend: "Alerts" 
+                        },
+                        { 
+                          icon: "hourglass_empty", 
+                          iconColor: "text-purple-400", 
+                          bgColor: "bg-purple-400/5 border-purple-400/10",
+                          val: `${deepFocusTime}m`, 
+                          label: "Deep Work", 
+                          trend: "Focus" 
+                        },
+                        { 
+                          icon: "donut_large", 
+                          iconColor: "text-[#4edea3]", 
+                          bgColor: "bg-[#4edea3]/5 border-[#4edea3]/10",
+                          val: `${tasks.length > 0 ? Math.round((completedTasks.length / tasks.length) * 100) : 0}%`, 
+                          label: "Completions", 
+                          trend: `${completedTasks.length}/${tasks.length}` 
+                        }
+                      ].map((stat, idx) => (
+                        <div 
+                          key={idx} 
+                          className={`glass-panel rounded-xl p-4 flex flex-col justify-between hover:bg-[#373940]/15 hover:border-white/20 hover:scale-[1.04] transition-all duration-300 border ${stat.bgColor}`}
+                        >
+                          <div className="flex justify-between items-start">
+                            <span className={`material-symbols-outlined ${stat.iconColor} text-[18px]`}>{stat.icon}</span>
+                            <span className="font-mono text-[8px] text-[#c7c4d7] px-1 bg-white/5 border border-white/5 rounded">
+                              {stat.trend}
+                            </span>
                           </div>
-
-                          {/* Footer & CTA Button */}
-                          <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 mt-8 pt-4 border-t border-white/5">
-                            <p className="text-[11px] text-[#c7c4d7] max-w-sm">This AI actively helps me finish work before I miss deadlines.</p>
-                            <button 
-                              onClick={() => {
-                                if (topTask) {
-                                  setSelectedTask(topTask);
-                                } else {
-                                  showToast("No pending tasks to analyze.", "info");
-                                }
-                              }}
-                              className="bg-[#c0c1ff] hover:bg-[#b0b2ff] text-[#1000a9] hover:scale-[1.04] active:scale-[0.98] font-bold text-sm px-8 py-3.5 rounded-xl transition-all shadow-lg shadow-[#c0c1ff]/20 flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
-                            >
-                              <span className="material-symbols-outlined text-[20px]">play_arrow</span>
-                              Start Working
-                            </button>
+                          <div className="mt-4">
+                            <div className="text-xl sm:text-2xl font-bold text-white font-mono leading-none tracking-tight">{stat.val}</div>
+                            <div className="text-[10px] text-[#c7c4d7]/90 mt-1.5 font-medium truncate">{stat.label}</div>
                           </div>
                         </div>
-                      );
-                    })()}
+                      ))}
+                    </div>
+                  </section>
 
-                    {/* Stats bento panel */}
-                    <div className="lg:col-span-4 flex flex-col justify-between h-full gap-3">
-                      <div className="grid grid-cols-2 gap-4 h-full">
-                        {[
-                          { icon: "assignment_late", iconColor: "text-[#d0bcff]", val: pendingTasks.length, label: "Due Today", trend: `+${pendingTasks.length}` },
-                          { icon: "check_circle", iconColor: "text-[#4edea3]", val: completedTasks.length, label: "Completed", trend: "+12" },
-                          { icon: "warning", iconColor: "text-[#ffb4ab]", val: sortedPendingTasks.filter(t => getCountdown(t.deadline).isOverdue).length, label: "Missed", trend: "--" },
-                          { icon: "speed", iconColor: "text-[#c0c1ff]", val: 92, label: "AI Score", trend: "Top 5%" }
-                        ].map((stat, i) => (
-                          <div key={i} className="glass-panel rounded-xl p-4 flex flex-col justify-between hover:bg-[#373940]/10 transition-colors">
-                            <div className="flex justify-between items-start mb-4">
-                              <div className="w-9 h-9 rounded-lg bg-[#33343b]/40 flex items-center justify-center">
-                                <span className={`material-symbols-outlined ${stat.iconColor} text-[18px]`}>{stat.icon}</span>
-                              </div>
-                              <span className="font-mono text-[9px] text-[#c7c4d7] bg-[#1e1f26] px-1.5 py-0.5 rounded">
-                                {stat.trend}
-                              </span>
-                            </div>
+                  {/* Redesigned Centerpiece Grid: AI recommendation centerpiece (Left) & Focus Timer component (Right) */}
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    
+                    {/* Centered Recommendation Card (Left) */}
+                    <div className="lg:col-span-7 bg-[#13111c]/70 backdrop-blur-3xl border border-[#c0c1ff]/35 shadow-[0_0_50px_rgba(192,193,255,0.15)] rounded-2xl p-6 sm:p-8 relative overflow-hidden flex flex-col justify-between group min-h-[420px] transition-all duration-500 hover:border-[#c0c1ff]/50">
+                      <div className="absolute -top-24 -right-24 w-80 h-80 bg-gradient-to-br from-[#c0c1ff]/15 to-transparent rounded-full blur-3xl pointer-events-none"></div>
+                      
+                      <div>
+                        <div className="flex justify-between items-center mb-6">
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-2xl animate-pulse-soft">🧠</span>
                             <div>
-                              <div className="text-2xl font-bold text-white font-mono leading-none">{stat.val}</div>
-                              <div className="text-[11px] text-[#c7c4d7] mt-1">{stat.label}</div>
+                              <span className="font-mono text-xs text-[#c0c1ff] tracking-wider uppercase font-bold flex items-center gap-1.5">
+                                AI Core Assistant Centerpiece
+                                <span className="w-1.5 h-1.5 rounded-full bg-[#c0c1ff] animate-ping"></span>
+                              </span>
+                              <p className="text-[10px] font-mono text-[#c7c4d7]/70 mt-0.5">Continuous Decision Optimization Engine</p>
                             </div>
                           </div>
-                        ))}
+                          
+                          {sortedPendingTasks[0] && (
+                            <div className="font-mono text-[9px] font-bold bg-red-500/10 border border-red-500/20 px-2.5 py-1 rounded-full text-red-400 flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
+                              Priority Match
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="space-y-4">
+                          <span className="text-[#c7c4d7] font-mono text-[10px] uppercase tracking-widest block mb-1">Recommended Direct Focus Target</span>
+                          <h2 className="font-sans font-extrabold text-2xl sm:text-3xl text-white tracking-tight leading-tight group-hover:text-[#c0c1ff] transition-colors duration-300">
+                            {sortedPendingTasks[0] ? sortedPendingTasks[0].title : "Backlog Is Completely Settled!"}
+                          </h2>
+
+                          {sortedPendingTasks[0] ? (
+                            <div className="space-y-4">
+                              <div className="bg-[#1e1f26]/80 p-4 rounded-xl border border-white/5 space-y-2.5">
+                                <span className="text-[9px] font-mono text-[#c0c1ff] uppercase tracking-wider block font-bold">AI Predictive Reasoning</span>
+                                <p className="text-xs text-[#e2e2eb] leading-relaxed">
+                                  {sortedPendingTasks[0].priorityReasoning || "This high-importance item is currently leading your productivity queue. Initiating a dedicated focus session right now is estimated to increase your weekly completion score."}
+                                </p>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-4">
+                                <div className="bg-[#1e1f26]/60 p-3 rounded-lg border border-white/5">
+                                  <span className="text-[9px] font-mono text-[#c7c4d7]/80 uppercase block">Workload Effort</span>
+                                  <span className="font-mono text-sm text-[#c0c1ff] font-bold">{sortedPendingTasks[0].estimatedMinutes} minutes</span>
+                                </div>
+                                <div className="bg-[#1e1f26]/60 p-3 rounded-lg border border-white/5">
+                                  <span className="text-[9px] font-mono text-[#c7c4d7]/80 uppercase block">Deadline Risk</span>
+                                  <span className="font-mono text-sm text-amber-400 font-bold">
+                                    {calculateRisk(sortedPendingTasks[0]).percentage}% ({calculateRisk(sortedPendingTasks[0]).level})
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="bg-[#1e1f26]/80 p-5 rounded-xl border border-white/5 mt-2">
+                              <p className="text-xs text-[#c7c4d7] leading-relaxed">
+                                Outstanding consistency. No pending targets require priority attention. This clear window represents the ideal opportunity to consult your coaching planner for fresh strategic milestones.
+                              </p>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <p className="text-[10px] text-[#c7c4d7]/70 italic text-center font-mono">
-                        Sample analytics based on current task activity.
-                      </p>
+
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mt-8 pt-4 border-t border-white/5">
+                        <p className="text-[11px] text-[#c7c4d7]/80">Guiding you dynamically to take decision-free actions.</p>
+                        {sortedPendingTasks[0] ? (
+                          <div className="flex gap-2.5">
+                            <button 
+                              onClick={() => {
+                                const task = sortedPendingTasks[0];
+                                setFocusTimerTask(task);
+                                setFocusTimeLeft(task.estimatedMinutes * 60);
+                                setFocusTimeTotal(task.estimatedMinutes * 60);
+                                setFocusIsRunning(true);
+                                showToast(`🎯 Pomodoro focus loaded: "${task.title}"`, "success");
+                              }}
+                              className="bg-[#c0c1ff] hover:bg-[#b0b2ff] text-[#1000a9] font-bold text-xs px-6 py-3 rounded-xl transition-all shadow-md hover:scale-[1.03] active:scale-[0.98] flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined text-[16px]">timer</span>
+                              Deep Session
+                            </button>
+                            <button 
+                              onClick={() => handleBreakdown(sortedPendingTasks[0].id)}
+                              className="bg-[#1e1f26]/80 border border-white/10 text-white hover:bg-[#1e1f26] font-bold text-xs px-5 py-3 rounded-xl transition-all hover:scale-[1.03] active:scale-[0.98] cursor-pointer"
+                            >
+                              Breakdown
+                            </button>
+                          </div>
+                        ) : (
+                          <button 
+                            onClick={() => setShowAddModal(true)}
+                            className="bg-[#c0c1ff] hover:bg-[#b0b2ff] text-[#1000a9] font-bold text-xs px-6 py-3 rounded-xl transition-all cursor-pointer hover:scale-[1.03]"
+                          >
+                            Create Target
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Interactive Focus Timer Dashboard Card (Right) */}
+                    <div className="lg:col-span-5 bg-[#181922] border border-white/10 rounded-2xl p-6 flex flex-col justify-between min-h-[420px] relative overflow-hidden group hover:border-white/15 transition-all">
+                      <div className="absolute top-0 right-0 w-32 h-32 bg-[#4edea3]/5 rounded-full blur-2xl pointer-events-none"></div>
+                      
+                      <div>
+                        <div className="flex justify-between items-center mb-4">
+                          <h2 className="text-xs font-mono font-bold text-[#c7c4d7] flex items-center gap-1.5 uppercase">
+                            <span className="material-symbols-outlined text-[#4edea3] text-[18px]">hourglass_empty</span>
+                            Interactive Focus Deck
+                          </h2>
+                          <div className="flex gap-1.5">
+                            {["25m", "50m", "15m"].map((p) => (
+                              <button
+                                key={p}
+                                onClick={() => {
+                                  const mins = p === "25m" ? 25 : p === "50m" ? 50 : 15;
+                                  setFocusTimeLeft(mins * 60);
+                                  setFocusTimeTotal(mins * 60);
+                                  setFocusIsRunning(false);
+                                }}
+                                className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-white/5 hover:bg-white/10 text-[#c7c4d7] border border-white/5 hover:text-white transition-colors"
+                              >
+                                {p}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="space-y-4">
+                          <label className="block text-[10px] font-semibold text-[#c7c4d7] font-mono uppercase">Select Task to Anchor Focus:</label>
+                          <select 
+                            value={focusTimerTask ? focusTimerTask.id : ""}
+                            onChange={(e) => {
+                              const t = tasks.find(item => item.id === e.target.value) || null;
+                              setFocusTimerTask(t);
+                              if (t) {
+                                setFocusTimeLeft(t.estimatedMinutes * 60);
+                                setFocusTimeTotal(t.estimatedMinutes * 60);
+                              }
+                            }}
+                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2.5 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
+                          >
+                            <option value="">-- Generic Focus Session --</option>
+                            {pendingTasks.map(t => (
+                              <option key={t.id} value={t.id}>{t.title} ({t.estimatedMinutes}m)</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Centered Glowing Timer Countdown */}
+                        <div className="flex flex-col items-center justify-center my-6 relative py-4">
+                          {/* Radial glowing waves while focus active */}
+                          <div className="relative w-32 h-32 rounded-full border border-white/5 bg-white/[0.02] flex flex-col items-center justify-center">
+                            {focusIsRunning && (
+                              <motion.div
+                                animate={{ scale: [1, 1.25, 1], opacity: [0.15, 0.05, 0.15] }}
+                                transition={{ repeat: Infinity, duration: 2.2, ease: "easeInOut" }}
+                                className="absolute inset-0 rounded-full bg-[#c0c1ff]/20 pointer-events-none"
+                              />
+                            )}
+                            <div className="text-3xl font-bold font-mono text-white select-none">
+                              {(() => {
+                                const m = Math.floor(focusTimeLeft / 60);
+                                const s = focusTimeLeft % 60;
+                                return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+                              })()}
+                            </div>
+                            <div className="text-[9px] font-mono text-[#c0c1ff] uppercase tracking-widest mt-1">
+                              {focusIsRunning ? "Active Deep" : "Ready Block"}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-4">
+                        <div className="flex justify-center items-center gap-3">
+                          <button
+                            onClick={() => setFocusIsRunning(!focusIsRunning)}
+                            className={`flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer border ${
+                              focusIsRunning 
+                                ? "bg-red-400/10 text-red-400 border-red-400/20 hover:bg-red-400/20" 
+                                : "bg-[#4edea3] hover:bg-[#3ec48f] text-[#100010] border-transparent"
+                            }`}
+                          >
+                            <span className="material-symbols-outlined text-[16px] font-bold">
+                              {focusIsRunning ? "pause" : "play_arrow"}
+                            </span>
+                            {focusIsRunning ? "Pause Block" : "Start Session"}
+                          </button>
+                          
+                          <button
+                            onClick={() => {
+                              setFocusIsRunning(false);
+                              setFocusTimeLeft(focusTimeTotal);
+                            }}
+                            className="p-2.5 rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-colors active:scale-95 cursor-pointer"
+                            title="Reset Timer"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">replay</span>
+                          </button>
+                        </div>
+
+                        {focusTimerTask && (
+                          <div className="p-2.5 bg-[#1e1f26] rounded-xl border border-white/5 text-center">
+                            <span className="text-[9px] font-mono text-[#c7c4d7]/70 block">ACTIVE ANCHOR TARGET:</span>
+                            <span className="text-xs font-semibold text-white truncate block">{focusTimerTask.title}</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                   </div>
 
-                  {/* High Priority Checklist segment */}
+                  {/* Quick Actions Grid Row (7 Buttons) */}
                   <section className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                        <span className="material-symbols-outlined text-[#ffb4ab]">flag</span>
-                        High Priority Focus
-                      </h3>
-                      <button 
-                        onClick={() => setActiveTab("tasks")}
-                        className="text-[#c0c1ff] hover:text-[#d0bcff] text-xs font-semibold flex items-center gap-0.5 transition-colors"
-                      >
-                        View All <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
-                      </button>
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[#c0c1ff] text-[20px]">bolt</span>
+                      <h3 className="text-xs font-mono font-bold uppercase tracking-widest text-[#c7c4d7]">Personal Assistant Quick Actions</h3>
                     </div>
 
-                    <div className="space-y-3">
-                      {sortedPendingTasks.length > 0 ? (
-                        sortedPendingTasks.map(t => {
-                          const countdown = getCountdown(t.deadline);
-                          
-                          // Dynamic Tooltip parameters
-                          const msLeft = new Date(t.deadline).getTime() - Date.now();
-                          const urgencyLabel = msLeft < 12 * 60 * 60 * 1000 ? "Critical 🚨" : msLeft < 24 * 60 * 60 * 1000 ? "High ⚠️" : msLeft < 72 * 60 * 60 * 1000 ? "Medium ⚡" : "Low 🛡️";
-                          const effortLabel = t.estimatedMinutes < 30 ? "Low (quick win)" : t.estimatedMinutes <= 90 ? "Medium" : "High (deep block)";
+                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+                      {[
+                        { 
+                          label: "Create Task", 
+                          icon: "add_task", 
+                          action: () => setShowAddModal(true), 
+                          color: "hover:bg-[#c0c1ff]/10 hover:text-[#c0c1ff]" 
+                        },
+                        { 
+                          label: "Plan My Day", 
+                          icon: "auto_awesome", 
+                          action: () => setActiveTab("planner"), 
+                          color: "hover:bg-purple-400/10 hover:text-purple-300" 
+                        },
+                        { 
+                          label: "Ask AI Coach", 
+                          icon: "psychology", 
+                          action: () => setAiAskOpen(true), 
+                          color: "hover:bg-amber-400/10 hover:text-amber-300" 
+                        },
+                        { 
+                          label: "Start Pomodoro", 
+                          icon: "timer", 
+                          action: () => {
+                            const task = sortedPendingTasks[0] || null;
+                            setFocusTimerTask(task);
+                            setFocusTimeLeft(25 * 60);
+                            setFocusTimeTotal(25 * 60);
+                            setFocusIsRunning(true);
+                            showToast("25-minute Pomodoro focus session initiated!", "success");
+                          }, 
+                          color: "hover:bg-[#4edea3]/10 hover:text-[#4edea3]" 
+                        },
+                        { 
+                          label: "Open Calendar", 
+                          icon: "calendar_today", 
+                          action: () => setActiveTab("schedule"), 
+                          color: "hover:bg-emerald-400/10 hover:text-emerald-300" 
+                        },
+                        { 
+                          label: "Voice Assistant", 
+                          icon: "mic", 
+                          action: () => {
+                            setVoiceListening(true);
+                            setVoiceText("Listening for command...");
+                            setTimeout(() => {
+                              setVoiceText("Processing voice query: 'Structure study prep tasks'...");
+                              setTimeout(() => {
+                                setVoiceText("Success: Structured tactical preparation backlog.");
+                                showToast("Voice input processed successfully!", "success");
+                                setTimeout(() => setVoiceListening(false), 1500);
+                              }, 1500);
+                            }, 2000);
+                          }, 
+                          color: "hover:bg-rose-400/10 hover:text-rose-300" 
+                        },
+                        { 
+                          label: "Import Schedule", 
+                          icon: "cloud_download", 
+                          action: () => showToast("Schedule synced with Google Calendar.", "success"), 
+                          color: "hover:bg-blue-400/10 hover:text-blue-300" 
+                        }
+                      ].map((act, i) => (
+                        <button
+                          key={i}
+                          onClick={act.action}
+                          className={`glass-panel p-4 rounded-xl border border-white/5 text-center flex flex-col items-center justify-center gap-2.5 transition-all duration-300 cursor-pointer hover:-translate-y-1 ${act.color}`}
+                        >
+                          <div className="w-9 h-9 rounded-lg bg-white/5 border border-white/5 flex items-center justify-center">
+                            <span className="material-symbols-outlined text-[18px]">{act.icon}</span>
+                          </div>
+                          <span className="text-xs font-semibold tracking-wide">{act.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
 
-                          return (
-                            <div 
-                              key={t.id}
-                              className={`group relative bg-[#1e1f26]/40 backdrop-blur-lg rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all duration-300 hover:scale-[1.01] hover:-translate-y-0.5 hover:border-[#c0c1ff]/30 shadow-md hover:shadow-[0_12px_40px_rgba(192,193,255,0.06)] border border-white/5 ${getUrgencyBorder(t.deadline, t.status)}`}
-                            >
-                              <div className="flex items-start gap-3.5 flex-1">
-                                <button 
-                                  onClick={() => toggleTaskStatus(t)}
-                                  className="mt-1 w-5.5 h-5.5 rounded-lg border border-white/20 hover:border-[#c0c1ff] hover:bg-[#c0c1ff]/10 flex items-center justify-center transition-all cursor-pointer text-transparent hover:text-[#c0c1ff]/80 hover:scale-110"
-                                  title="Mark complete"
-                                >
-                                  <span className="material-symbols-outlined text-[14px] font-extrabold">check</span>
-                                </button>
-                                
-                                <div className="space-y-1.5">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <h4 className="font-bold text-white text-md tracking-tight group-hover:text-[#c0c1ff] transition-colors duration-200">
-                                      {t.title}
-                                    </h4>
-                                    
-                                    {/* Countdown Chip */}
-                                    <span className={`font-mono text-[10px] px-2.5 py-0.5 rounded-full border flex items-center gap-1.5 ${
-                                      countdown.isOverdue || countdown.text.includes("m left") || (countdown.hours && countdown.hours < 2)
-                                        ? "bg-red-400/10 text-red-300 border-red-400/20"
-                                        : countdown.hours && countdown.hours < 24
-                                          ? "bg-amber-400/10 text-amber-300 border-amber-400/20"
-                                          : "bg-emerald-400/10 text-emerald-300 border-emerald-400/20"
-                                    }`}>
-                                      <span className={`w-1.5 h-1.5 rounded-full ${
-                                        countdown.isOverdue || countdown.text.includes("m left") || (countdown.hours && countdown.hours < 2)
-                                          ? "bg-red-400 animate-pulse"
+                  {/* Upcoming Schedule Timeline & Premium Task Checklist Bento Grid */}
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    
+                    {/* Upcoming Tasks Checklist (Left) */}
+                    <div className="lg:col-span-8 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[#ffb4ab]">flag</span>
+                          <h3 className="text-xs font-mono font-bold uppercase tracking-widest text-[#c7c4d7]">Strategic Backlog Checklist</h3>
+                        </div>
+                        <button 
+                          onClick={() => setActiveTab("tasks")}
+                          className="text-[#c0c1ff] hover:text-[#d0bcff] text-xs font-semibold flex items-center gap-1 transition-colors font-mono uppercase"
+                        >
+                          View Backlog <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                        </button>
+                      </div>
+
+                      <div className="space-y-3.5">
+                        {sortedPendingTasks.length > 0 ? (
+                          sortedPendingTasks.map(t => {
+                            const countdown = getCountdown(t.deadline);
+                            const msLeft = new Date(t.deadline).getTime() - Date.now();
+                            const difficultyLabel = t.estimatedMinutes < 30 ? "Low" : t.estimatedMinutes <= 90 ? "Medium" : "High Focus";
+                            const riskLevel = calculateRisk(t);
+                            
+                            return (
+                              <div 
+                                key={t.id}
+                                className={`group relative bg-[#1e1f26]/40 backdrop-blur-lg rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all duration-300 hover:scale-[1.01] hover:border-[#c0c1ff]/30 border border-white/5 ${getUrgencyBorder(t.deadline, t.status)}`}
+                              >
+                                <div className="flex items-start gap-3.5 flex-1 min-w-0">
+                                  <button 
+                                    onClick={() => toggleTaskStatus(t)}
+                                    className="mt-1 w-5.5 h-5.5 rounded-lg border border-white/20 hover:border-[#c0c1ff] hover:bg-[#c0c1ff]/10 flex items-center justify-center transition-all cursor-pointer text-transparent hover:text-[#c0c1ff]/80 hover:scale-110"
+                                    title="Mark complete"
+                                  >
+                                    <span className="material-symbols-outlined text-[14px] font-extrabold">check</span>
+                                  </button>
+                                  
+                                  <div className="space-y-1.5 flex-1 min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2.5">
+                                      <h4 className="font-sans font-bold text-white text-md tracking-tight group-hover:text-[#c0c1ff] transition-colors duration-200 truncate">
+                                        {t.title}
+                                      </h4>
+                                      
+                                      {/* Countdown Pill */}
+                                      <span className={`font-mono text-[9px] px-2 py-0.5 rounded-full border flex items-center gap-1 ${
+                                        countdown.isOverdue || countdown.text.includes("m left")
+                                          ? "bg-red-400/10 text-red-300 border-red-400/20"
                                           : countdown.hours && countdown.hours < 24
-                                            ? "bg-amber-400 animate-pulse-soft"
-                                            : "bg-emerald-400"
-                                      }`}></span>
-                                      {countdown.text}
-                                    </span>
- 
-                                    {/* AI Score Pill with Tooltip */}
-                                    {t.priorityScore && (
-                                      <div className="relative group/tooltip flex items-center">
-                                        <span className="cursor-help font-mono text-[10px] text-[#c0c1ff] bg-[#c0c1ff]/10 px-2.5 py-0.5 rounded-full border border-[#c0c1ff]/20 hover:bg-[#c0c1ff]/20 transition-all flex items-center gap-1">
-                                          <span className="material-symbols-outlined text-[12px] text-[#c0c1ff]">bolt</span>
+                                            ? "bg-amber-400/10 text-amber-300 border-amber-400/20"
+                                            : "bg-emerald-400/10 text-emerald-300 border-emerald-400/20"
+                                      }`}>
+                                        <span className={`w-1 h-1 rounded-full ${
+                                          countdown.isOverdue || countdown.text.includes("m left") ? "bg-red-400 animate-pulse" : "bg-emerald-400"
+                                        }`}></span>
+                                        {countdown.text}
+                                      </span>
+
+                                      {/* AI Score pill */}
+                                      {t.priorityScore && (
+                                        <span className="font-mono text-[9px] text-[#c0c1ff] bg-[#c0c1ff]/10 px-2 py-0.5 rounded-full border border-[#c0c1ff]/25 flex items-center gap-0.5">
+                                          <span className="material-symbols-outlined text-[10px]">bolt</span>
                                           AI Score: {t.priorityScore}
                                         </span>
-                                        <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-60 bg-[#15161e] border border-[#c0c1ff]/30 p-4 rounded-xl text-xs text-[#c7c4d7] opacity-0 group-hover/tooltip:opacity-100 transition-opacity duration-200 z-50 shadow-2xl space-y-2.5 backdrop-blur-xl">
-                                          <div className="font-bold text-white flex items-center gap-1.5 border-b border-white/5 pb-1.5">
-                                            <span className="material-symbols-outlined text-[14px] text-[#c0c1ff]">auto_awesome</span>
-                                            <span>Life Saver Priority Breakdown</span>
-                                          </div>
-                                          <div className="space-y-1.5 font-mono text-[11px]">
-                                            <div className="flex justify-between">
-                                              <span className="text-[#c7c4d7]/70">Urgency:</span>
-                                              <span className="font-bold text-amber-300">{urgencyLabel}</span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                              <span className="text-[#c7c4d7]/70">Importance:</span>
-                                              <span className="font-bold text-[#c0c1ff]">{t.importance}</span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                              <span className="text-[#c7c4d7]/70">Effort:</span>
-                                              <span className="font-bold text-emerald-400">{effortLabel}</span>
-                                            </div>
-                                          </div>
-                                          <div className="border-t border-white/5 pt-1.5 flex justify-between items-center">
-                                            <span className="text-white font-bold">Priority Score:</span>
-                                            <span className="text-md font-extrabold text-[#c0c1ff] font-mono">{t.priorityScore}/100</span>
-                                          </div>
+                                      )}
+                                    </div>
+                                    
+                                    <p className="text-xs text-[#c7c4d7] leading-relaxed line-clamp-2">
+                                      {t.description || "No tactical details provided. Tap Break it down to define the workspace."}
+                                    </p>
+
+                                    {/* Subtasks Progress Bar (Durable & Detailed) */}
+                                    {t.subtasks && t.subtasks.length > 0 && (
+                                      <div className="mt-3.5 space-y-1.5 bg-[#15161e]/50 p-3 rounded-lg border border-white/5">
+                                        <div className="flex justify-between text-[9px] text-[#c7c4d7] font-mono font-bold tracking-wide">
+                                          <span>TACTICAL SUBTASKS PROGRESS</span>
+                                          <span>{t.subtasks.filter(st => st.status === "completed").length} / {t.subtasks.length}</span>
+                                        </div>
+                                        <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
+                                          <div 
+                                            className="bg-gradient-to-r from-[#c0c1ff] to-[#4edea3] h-full transition-all duration-500"
+                                            style={{ width: `${(t.subtasks.filter(st => st.status === "completed").length / t.subtasks.length) * 100}%` }}
+                                          />
                                         </div>
                                       </div>
                                     )}
- 
-                                    {/* Importance Label */}
-                                    <span className="font-mono text-[10px] text-[#c7c4d7] bg-[#33343b]/60 px-2.5 py-0.5 rounded-full border border-white/5">
-                                      {t.importance}
-                                    </span>
 
-                                    {/* Estimated Duration Badge */}
-                                    <span className="font-mono text-[10px] text-[#c7c4d7] bg-[#33343b]/60 px-2.5 py-0.5 rounded-full border border-white/5 flex items-center gap-1">
-                                      <span className="material-symbols-outlined text-[12px]">schedule</span>
-                                      {t.estimatedMinutes || 45}m
-                                    </span>
+                                    {/* Task metadata pills row */}
+                                    <div className="flex flex-wrap gap-2 pt-1">
+                                      <span className="font-mono text-[9px] text-[#c7c4d7] bg-[#33343b]/40 px-2 py-0.5 rounded-full border border-white/5">
+                                        Difficulty: {difficultyLabel}
+                                      </span>
+                                      <span className={`font-mono text-[9px] px-2 py-0.5 rounded-full border border-white/5 flex items-center gap-1 ${riskLevel.color} bg-[#33343b]/40`}>
+                                        <span className="w-1 h-1 rounded-full bg-current"></span>
+                                        Risk: {riskLevel.level}
+                                      </span>
+                                      <span className="font-mono text-[9px] text-[#c7c4d7] bg-[#33343b]/40 px-2 py-0.5 rounded-full border border-white/5 flex items-center gap-0.5">
+                                        <span className="material-symbols-outlined text-[10px]">schedule</span>
+                                        {t.estimatedMinutes}m duration
+                                      </span>
+                                    </div>
                                   </div>
-                                  
-                                  <p className="text-xs text-[#c7c4d7] leading-relaxed max-w-2xl">
-                                    {t.description || "No tactical details provided. Tap Break it down to define the workspace."}
-                                  </p>
+                                </div>
 
-                                  {/* AI Reasoning display on the card */}
-                                  {t.priorityReasoning && (
-                                    <p className="text-[11px] text-[#c0c1ff]/80 italic mt-1.5 bg-[#c0c1ff]/5 px-2.5 py-1 rounded border border-[#c0c1ff]/10">
-                                      🧠 AI Coach: {t.priorityReasoning}
-                                    </p>
-                                  )}
+                                <div className="flex items-center gap-2 pt-3 md:pt-0 border-t border-white/5 md:border-0 self-end md:self-auto shrink-0">
+                                  <button 
+                                    onClick={() => handleBreakdown(t.id)}
+                                    className="px-3.5 py-1.5 rounded-lg bg-[#33343b]/85 hover:bg-[#33343b] text-white font-bold text-xs transition-all cursor-pointer hover:scale-105 active:scale-95"
+                                  >
+                                    Breakdown
+                                  </button>
+                                  <button 
+                                    onClick={() => openEditModal(t)}
+                                    className="p-1.5 text-[#c7c4d7] hover:text-[#c0c1ff] rounded-lg hover:bg-[#33343b]/50 transition-colors"
+                                  >
+                                    <span className="material-symbols-outlined text-[18px]">edit</span>
+                                  </button>
+                                  <button 
+                                    onClick={() => handleDeleteTask(t.id)}
+                                    className="p-1.5 text-red-400 hover:text-red-300 rounded-lg hover:bg-red-400/10 transition-colors"
+                                  >
+                                    <span className="material-symbols-outlined text-[18px]">delete</span>
+                                  </button>
                                 </div>
                               </div>
- 
-                              <div className="flex items-center gap-2 border-t border-white/5 md:border-0 pt-3 md:pt-0 self-end md:self-auto shrink-0">
-                                <button 
-                                  onClick={() => handleBreakdown(t.id)}
-                                  className="px-4 py-1.5 rounded-lg bg-[#33343b]/80 hover:bg-[#33343b] text-white font-semibold text-xs transition-colors cursor-pointer hover:scale-105 active:scale-95"
-                                >
-                                  Break it down
-                                </button>
-                                <button 
-                                  onClick={() => openEditModal(t)}
-                                  className="p-1.5 text-[#c7c4d7] hover:text-[#c0c1ff] rounded-lg hover:bg-[#33343b]/50 transition-colors hover:scale-110 active:scale-90"
-                                >
-                                  <span className="material-symbols-outlined text-[18px]">edit</span>
-                                </button>
-                                <button 
-                                  onClick={() => handleDeleteTask(t.id)}
-                                  className="p-1.5 text-red-400 hover:text-red-300 rounded-lg hover:bg-red-400/10 transition-colors hover:scale-110 active:scale-90"
-                                >
-                                  <span className="material-symbols-outlined text-[18px]">delete</span>
-                                </button>
-                              </div>
+                            );
+                          })
+                        ) : (
+                          <div className="glass-panel p-12 text-center rounded-2xl border border-white/5 space-y-5">
+                            <div className="w-16 h-16 rounded-full bg-white/5 border border-white/5 flex items-center justify-center mx-auto shadow-inner shadow-white/5">
+                              <span className="material-symbols-outlined text-3xl text-[#c0c1ff] animate-pulse-soft">celebration</span>
                             </div>
-                          );
-                        })
-                      ) : (
-                        <div className="glass-panel p-12 text-center rounded-2xl border border-[#c0c1ff]/10 max-w-lg mx-auto space-y-6 shadow-2xl relative overflow-hidden group">
-                          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 bg-gradient-to-br from-[#c0c1ff]/5 to-transparent rounded-full blur-3xl pointer-events-none"></div>
-                          
-                          <div className="relative z-10 space-y-4">
-                            <div className="w-20 h-20 rounded-full bg-gradient-to-br from-[#c0c1ff]/10 to-[#d0bcff]/5 border border-[#c0c1ff]/20 flex items-center justify-center mx-auto shadow-lg shadow-[#c0c1ff]/5 group-hover:scale-105 transition-transform duration-500">
-                              <span className="material-symbols-outlined text-4xl text-[#c0c1ff] animate-pulse-soft">celebration</span>
+                            <div className="space-y-1.5">
+                              <h4 className="font-sans font-bold text-white text-md">Strategic Backlog Slipped Clean 🎉</h4>
+                              <p className="text-xs text-[#c7c4d7] max-w-sm mx-auto">No outstanding tasks remain today. Use your planner dashboard to populate future goals.</p>
                             </div>
-                            
-                            <div className="space-y-2">
-                              <h4 className="font-sans font-extrabold text-xl text-white tracking-tight">No tasks today 🎉</h4>
-                              <p className="text-sm text-[#c0c1ff] font-semibold">You're all caught up.</p>
-                              <p className="text-xs text-[#c7c4d7] leading-relaxed max-w-sm mx-auto">
-                                Let's save your future self from last-minute panic. Prepare ahead or create a brand new target!
-                              </p>
-                            </div>
-
-                            <div className="flex flex-col sm:flex-row justify-center items-center gap-3">
-                              <button
-                                onClick={() => setShowAddModal(true)}
-                                className="inline-flex items-center gap-1.5 px-6 py-2.5 bg-[#c0c1ff] hover:bg-[#b0b2ff] text-[#1000a9] font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md hover:scale-[1.03] active:scale-[0.98]"
-                              >
-                                <span className="material-symbols-outlined text-[16px] font-bold">add</span>
-                                Create New Goal
+                            <div className="flex justify-center gap-2">
+                              <button onClick={() => setShowAddModal(true)} className="px-5 py-2 bg-[#c0c1ff] hover:bg-[#b0b2ff] text-[#1000a9] font-bold text-xs rounded-xl transition-all cursor-pointer">
+                                Add Custom Target
                               </button>
-                              <button
-                                onClick={seedTasks}
-                                disabled={actionLoading}
-                                className="inline-flex items-center gap-1.5 px-6 py-2.5 bg-[#33343b]/85 hover:bg-[#33343b] text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md hover:scale-[1.03] active:scale-[0.98] border border-white/10"
-                              >
-                                <span className="material-symbols-outlined text-[16px]">restore</span>
-                                {actionLoading ? "Loading..." : "Load Example Tasks"}
+                              <button onClick={seedTasks} className="px-5 py-2 bg-white/5 hover:bg-white/10 border border-white/5 text-white font-bold text-xs rounded-xl transition-all cursor-pointer">
+                                Seed Example Tasks
                               </button>
                             </div>
                           </div>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
-                  </section>
+
+                    {/* Upcoming Calendar Timeline Preview (Right) */}
+                    <div className="lg:col-span-4 space-y-4">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-[#c0c1ff] text-[20px]">schedule</span>
+                        <h3 className="text-xs font-mono font-bold uppercase tracking-widest text-[#c7c4d7]">Today's Action Timeline</h3>
+                      </div>
+
+                      <div className="glass-panel rounded-2xl p-5 border border-white/5 space-y-5 relative">
+                        <div className="absolute top-4 left-6 bottom-4 w-[2px] bg-gradient-to-b from-[#c0c1ff]/30 to-transparent"></div>
+                        
+                        {sortedPendingTasks.length > 0 ? (
+                          sortedPendingTasks.slice(0, 3).map((t, idx) => {
+                            const dateObj = new Date(t.deadline);
+                            const formattedTime = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                            return (
+                              <div key={t.id} className="relative pl-6 group">
+                                <div className={`absolute left-[-3px] top-1 w-2.5 h-2.5 rounded-full border-2 bg-[#111319] group-hover:scale-125 transition-transform ${getUrgencyDotColor(t.deadline, t.status)}`}></div>
+                                
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono text-[9px] text-[#c0c1ff] bg-[#c0c1ff]/10 px-1.5 py-0.5 rounded">
+                                      {formattedTime}
+                                    </span>
+                                    <span className="text-[9px] font-mono text-[#4edea3] uppercase tracking-wider font-bold">
+                                      {idx === 0 ? "Focus Target" : idx === 1 ? "Deep work" : "Sync session"}
+                                    </span>
+                                  </div>
+                                  <h4 className="font-bold text-white text-xs group-hover:text-[#c0c1ff] transition-all truncate">{t.title}</h4>
+                                  <p className="text-[10px] text-[#c7c4d7] line-clamp-1">{t.description || "Active synchronized milestone"}</p>
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <p className="text-xs text-[#c7c4d7] text-center py-6">Your agenda is completely clear today.</p>
+                        )}
+                      </div>
+                    </div>
+
+                  </div>
+
+                  {/* Analytics Preview & Recent Activity Stream */}
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-2">
+                    
+                    {/* Simulated Bento Analytics graph (Left) */}
+                    <div className="lg:col-span-7 bg-[#15161e]/60 border border-white/5 p-6 rounded-2xl hover:border-white/10 transition-all duration-300">
+                      <div className="flex justify-between items-center mb-6">
+                        <div>
+                          <h2 className="text-xs font-mono font-bold text-white uppercase flex items-center gap-1.5">
+                            <span className="material-symbols-outlined text-[#c0c1ff] text-[18px]">analytics</span>
+                            Weekly Workload Productivity Trends
+                          </h2>
+                          <p className="text-[10px] text-[#c7c4d7] mt-0.5">Focus points acquired against dynamic planned goals</p>
+                        </div>
+                        <span className="font-mono text-[9px] text-[#c0c1ff] bg-[#c0c1ff]/10 px-2.5 py-0.5 rounded border border-[#c0c1ff]/10 uppercase font-bold">LIVE STATS</span>
+                      </div>
+
+                      {/* Bar graph */}
+                      <div className="h-44 flex items-end justify-between gap-2 px-1 pb-1 relative">
+                        <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-[0.03] py-2">
+                          <div className="w-full h-px bg-white"></div>
+                          <div className="w-full h-px bg-white"></div>
+                          <div className="w-full h-px bg-white"></div>
+                        </div>
+
+                        {[
+                          { day: "M", h: "45%", score: 45 },
+                          { day: "T", h: "70%", score: 70 },
+                          { day: "W", h: "90%", score: 90, active: true },
+                          { day: "T", h: "55%", score: 55 },
+                          { day: "F", h: "40%", score: 40 },
+                          { day: "S", h: "20%", score: 20 },
+                          { day: "S", h: "15%", score: 15 }
+                        ].map((bar, i) => (
+                          <div key={i} className="flex flex-col items-center gap-2 w-1/7 group relative z-10">
+                            <div className="absolute bottom-full mb-1 bg-[#15161e] border border-white/15 px-2 py-0.5 rounded text-[9px] text-[#c0c1ff] font-bold font-mono opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                              {bar.score} pts
+                            </div>
+                            <div className="w-6 sm:w-8 bg-white/5 hover:bg-white/10 rounded-t-md h-32 flex items-end transition-all">
+                              <div 
+                                className={`w-full rounded-t-md transition-all duration-700 ${
+                                  bar.active 
+                                    ? "bg-gradient-to-t from-[#571bc1] to-[#c0c1ff] shadow-[0_0_12px_rgba(192,193,255,0.3)]" 
+                                    : "bg-[#c0c1ff]/40"
+                                }`} 
+                                style={{ height: bar.h }}
+                              />
+                            </div>
+                            <span className={`font-mono text-[10px] ${bar.active ? "text-[#c0c1ff] font-bold" : "text-[#c7c4d7]"}`}>{bar.day}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Recent Activity Stream (Right) */}
+                    <div className="lg:col-span-5 bg-[#15161e]/60 border border-white/5 p-6 rounded-2xl hover:border-white/10 transition-all duration-300">
+                      <div className="flex justify-between items-center mb-4">
+                        <h2 className="text-xs font-mono font-bold text-white uppercase flex items-center gap-1.5">
+                          <span className="material-symbols-outlined text-orange-400">local_fire_department</span>
+                          AIDA Action Feed
+                        </h2>
+                        <span className="font-mono text-[9px] text-[#4edea3] bg-[#4edea3]/10 px-2 py-0.5 border border-[#4edea3]/25 rounded uppercase">Verified</span>
+                      </div>
+
+                      <div className="space-y-4">
+                        {[
+                          { action: "Deep Focus Session completed", detail: "Added 50m to study targets", icon: "task_alt", time: "2 hours ago" },
+                          { action: "Consistency milestone unlocked", detail: "Daily streak boosted to 5 consecutive days", icon: "workspace_premium", time: "4 hours ago" },
+                          { action: "Task prioritized by AI Coach", detail: "Structured milestone roadmap accepted", icon: "auto_awesome", time: "6 hours ago" }
+                        ].map((act, idx) => (
+                          <div key={idx} className="flex gap-3 text-xs">
+                            <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center shrink-0 border border-white/5">
+                              <span className="material-symbols-outlined text-xs text-[#c0c1ff]">{act.icon}</span>
+                            </div>
+                            <div className="flex-1 space-y-0.5">
+                              <div className="flex justify-between items-center">
+                                <span className="font-bold text-white">{act.action}</span>
+                                <span className="text-[9px] font-mono text-[#c7c4d7]/70">{act.time}</span>
+                              </div>
+                              <p className="text-[11px] text-[#c7c4d7]">{act.detail}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                  </div>
+
+                  {/* Overlays, modallers, and floating structures */}
+                  
+                  {/* Floating Voice wave modal */}
+                  {voiceListening && (
+                    <div className="fixed inset-0 bg-[#0f1015]/85 backdrop-blur-xl z-50 flex items-center justify-center p-4">
+                      <div className="glass-panel-heavy rounded-2xl p-8 max-w-sm w-full text-center border border-white/10 shadow-2xl space-y-6 relative overflow-hidden">
+                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 bg-gradient-to-br from-[#c0c1ff]/10 to-purple-500/5 rounded-full blur-3xl pointer-events-none"></div>
+                        
+                        <div className="relative space-y-4">
+                          <h4 className="text-xs font-mono text-[#c0c1ff] tracking-widest uppercase font-extrabold">AIDA Voice Assistant</h4>
+                          <p className="text-white text-md font-sans font-bold leading-relaxed">{voiceText}</p>
+                          
+                          {/* Animated voice bar waves using Framer Motion */}
+                          <div className="flex justify-center items-center gap-1.5 h-16 py-4">
+                            {[1.2, 1.6, 0.8, 2.0, 1.1, 1.4, 0.6].map((rate, i) => (
+                              <motion.div 
+                                key={i}
+                                animate={{ height: [12, 44 * rate, 12] }} 
+                                transition={{ repeat: Infinity, duration: 1.1, delay: i * 0.1, ease: "easeInOut" }} 
+                                className="w-1 bg-[#c0c1ff] rounded-full"
+                                style={{ height: "12px" }}
+                              />
+                            ))}
+                          </div>
+
+                          <p className="text-[10px] font-mono text-[#c7c4d7] tracking-wide">Say "Schedule study session" or "Optimize my deadlines"</p>
+                          
+                          <button
+                            onClick={() => setVoiceListening(false)}
+                            className="px-5 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-[#c7c4d7] hover:text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md"
+                          >
+                            Close Connection
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Ask AI slide-over assistant drawer panel */}
+                  {aiAskOpen && (
+                    <div className="fixed inset-0 bg-[#0f1015]/80 backdrop-blur-md z-50 flex items-center justify-end p-0">
+                      <motion.div 
+                        initial={{ x: "100%" }}
+                        animate={{ x: 0 }}
+                        exit={{ x: "100%" }}
+                        transition={{ type: "spring", damping: 28, stiffness: 220 }}
+                        className="bg-[#15161e] border-l border-white/10 w-full max-w-md h-full p-6 sm:p-8 flex flex-col justify-between shadow-2xl relative"
+                      >
+                        <div className="absolute top-1/2 left-1/3 w-64 h-64 bg-[#c0c1ff]/5 rounded-full blur-3xl pointer-events-none"></div>
+                        
+                        <div className="space-y-6 flex-1 overflow-y-auto pr-2">
+                          <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                            <div className="flex items-center gap-2">
+                              <span className="material-symbols-outlined text-[#c0c1ff] animate-pulse-soft">psychology</span>
+                              <span className="font-bold text-white text-md">Life Saver AI Coach</span>
+                            </div>
+                            <button 
+                              onClick={() => setAiAskOpen(false)}
+                              className="p-1.5 rounded-lg hover:bg-white/5 text-[#c7c4d7] hover:text-white transition-all"
+                            >
+                              <span className="material-symbols-outlined text-[20px]">close</span>
+                            </button>
+                          </div>
+
+                          <div className="space-y-4">
+                            <label className="block text-xs font-semibold text-[#c7c4d7]">Ask Life Saver AI to structure task actions, generate priority plans, or provide concept study guidelines:</label>
+                            <div className="flex gap-2">
+                              <input 
+                                type="text"
+                                value={aiAskQuery}
+                                onChange={(e) => setAiAskQuery(e.target.value)}
+                                placeholder="e.g. Help me prepare for next week's exam..."
+                                className="flex-1 bg-[#1e1f26] border border-white/10 rounded-lg px-3 py-2.5 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
+                                onKeyDown={(e) => { if (e.key === 'Enter') handleAskAICoach(aiAskQuery); }}
+                              />
+                              <button
+                                onClick={() => handleAskAICoach(aiAskQuery)}
+                                disabled={aiAskLoading}
+                                className="px-4 py-2 bg-[#c0c1ff] hover:bg-[#b0b2ff] text-[#1000a9] font-bold text-xs rounded-lg transition-all flex items-center gap-1 disabled:opacity-40"
+                              >
+                                {aiAskLoading ? "Analyzing..." : "Ask"}
+                              </button>
+                            </div>
+                          </div>
+
+                          {aiAskResponse && (
+                            <div className="space-y-4 pt-4 border-t border-white/5 animate-fade-in">
+                              <div className="p-4 rounded-xl bg-[#c0c1ff]/5 border border-[#c0c1ff]/10 text-xs text-white leading-relaxed">
+                                <span className="font-bold text-[#c0c1ff] block mb-2 flex items-center gap-1">
+                                  <span className="material-symbols-outlined text-[14px]">auto_awesome</span>
+                                  AI Coach Recommendation:
+                                </span>
+                                <p className="leading-relaxed text-[#e2e2eb] whitespace-pre-line">{aiAskResponse}</p>
+                              </div>
+                            </div>
+                          )}
+
+                          {suggestedTasks.length > 0 && (
+                            <div className="space-y-3 pt-2">
+                              <span className="text-xs font-bold text-white block">Suggested Task Actions:</span>
+                              <div className="space-y-2">
+                                {suggestedTasks.map((s, idx) => (
+                                  <div key={idx} className="glass-panel p-4 rounded-xl border border-white/5 space-y-3 flex flex-col justify-between">
+                                    <div>
+                                      <div className="flex justify-between items-start gap-2">
+                                        <h4 className="font-bold text-white text-xs leading-snug">{s.title}</h4>
+                                        <span className="text-[9px] font-mono text-[#c0c1ff] bg-[#c0c1ff]/10 px-1.5 py-0.5 rounded uppercase font-bold">{s.importance}</span>
+                                      </div>
+                                      <p className="text-[11px] text-[#c7c4d7] mt-1 leading-relaxed">{s.description}</p>
+                                    </div>
+                                    <div className="flex items-center justify-between pt-2 border-t border-white/5 text-[10px]">
+                                      <span className="font-mono text-[#c7c4d7]">Effort: {s.estimatedMinutes}m</span>
+                                      <button
+                                        onClick={() => insertSuggestedTask(s)}
+                                        className="px-2.5 py-1 bg-[#4edea3]/10 hover:bg-[#4edea3]/20 text-[#4edea3] font-bold rounded transition-colors"
+                                      >
+                                        Insert to Backlog
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="border-t border-white/5 pt-4 text-[10px] text-[#c7c4d7]/60 text-center font-mono">
+                          Active model: gemini-3.5-flash (Standard Tier)
+                        </div>
+                      </motion.div>
+                    </div>
+                  )}
+
                 </motion.div>
               )}
 
@@ -2241,7 +3141,7 @@ export default function App() {
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="glass-panel-heavy rounded-2xl max-w-lg w-full p-6 md:p-8 space-y-6"
+              className="glass-panel-heavy rounded-2xl max-w-lg w-full max-h-[85vh] overflow-y-auto p-6 md:p-8 space-y-6 scrollbar-thin"
             >
               <div className="flex justify-between items-center border-b border-white/5 pb-3">
                 <h3 className="font-bold text-lg text-white">Add New Task</h3>
@@ -2318,17 +3218,196 @@ export default function App() {
                   />
                 </div>
 
+                {/* Advanced smart settings collapsible */}
+                <div className="border-t border-white/5 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvanced(!showAdvanced)}
+                    className="flex items-center gap-1.5 text-xs text-[#c0c1ff] hover:text-white font-semibold focus:outline-none cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">
+                      {showAdvanced ? "expand_less" : "expand_more"}
+                    </span>
+                    Smart Task Engine Parameters
+                  </button>
+                  
+                  {showAdvanced && (
+                    <div className="mt-4 space-y-4 border border-white/5 bg-[#191b22]/30 rounded-xl p-4 animate-fade-in text-left">
+                      {/* Project & Tags */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="block text-[11px] font-semibold text-[#c7c4d7]">Project Folder</label>
+                          <input
+                            type="text"
+                            value={newProject}
+                            onChange={(e) => setNewProject(e.target.value)}
+                            placeholder="e.g. 'ML Course', 'Career'"
+                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="block text-[11px] font-semibold text-[#c7c4d7]">Tags (comma-separated)</label>
+                          <input
+                            type="text"
+                            value={newTagsString}
+                            onChange={(e) => setNewTagsString(e.target.value)}
+                            placeholder="e.g. 'pytorch, academic'"
+                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Difficulty & Energy */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="block text-[11px] font-semibold text-[#c7c4d7]">Complexity / Difficulty</label>
+                          <div className="grid grid-cols-3 gap-1">
+                            {(["Easy", "Medium", "Hard"] as const).map(diff => (
+                              <button
+                                type="button"
+                                key={diff}
+                                onClick={() => setNewDifficulty(diff)}
+                                className={`py-1.5 rounded text-[10px] font-semibold border transition-all cursor-pointer ${
+                                  newDifficulty === diff 
+                                    ? "bg-[#c0c1ff]/15 text-[#c0c1ff] border-[#c0c1ff]/50" 
+                                    : "bg-[#1e1f26] border-white/5 text-[#c7c4d7]"
+                                }`}
+                              >
+                                {diff}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="block text-[11px] font-semibold text-[#c7c4d7]">Energy Requirement</label>
+                          <div className="grid grid-cols-3 gap-1">
+                            {(["Low", "Medium", "High"] as const).map(energy => (
+                              <button
+                                type="button"
+                                key={energy}
+                                onClick={() => setNewEnergyRequirement(energy)}
+                                className={`py-1.5 rounded text-[10px] font-semibold border transition-all cursor-pointer ${
+                                  newEnergyRequirement === energy 
+                                    ? "bg-[#c0c1ff]/15 text-[#c0c1ff] border-[#c0c1ff]/50" 
+                                    : "bg-[#1e1f26] border-white/5 text-[#c7c4d7]"
+                                }`}
+                              >
+                                {energy}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Focus Requirement & Risk Level */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="block text-[11px] font-semibold text-[#c7c4d7]">Focus State</label>
+                          <select
+                            value={newFocusRequirement}
+                            onChange={(e: any) => setNewFocusRequirement(e.target.value)}
+                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
+                          >
+                            <option value="Low Focus">Low Focus (Light Tasks)</option>
+                            <option value="Medium Focus">Medium Focus (Standard Tasks)</option>
+                            <option value="High Focus">High Focus (Heavier Tasks)</option>
+                            <option value="Deep Focus">Deep Focus (Undistracted Sprint)</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="block text-[11px] font-semibold text-[#c7c4d7]">Risk Level</label>
+                          <select
+                            value={newRiskLevel}
+                            onChange={(e: any) => setNewRiskLevel(e.target.value)}
+                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
+                          >
+                            <option value="Low">Low Risk</option>
+                            <option value="Medium">Medium Risk</option>
+                            <option value="High">High Risk</option>
+                            <option value="Critical">Critical Risk</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Probability & Progress */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between text-[11px] text-[#c7c4d7]">
+                            <span className="font-semibold">Success Probability</span>
+                            <span className="font-mono font-bold text-[#c0c1ff]">{newCompletionProbability}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            value={newCompletionProbability}
+                            onChange={(e) => setNewCompletionProbability(Number(e.target.value))}
+                            className="w-full h-1 bg-[#33343b] rounded-lg appearance-none cursor-pointer accent-[#c0c1ff]"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between text-[11px] text-[#c7c4d7]">
+                            <span className="font-semibold">Initial Task Progress</span>
+                            <span className="font-mono font-bold text-[#c0c1ff]">{newProgress}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            value={newProgress}
+                            onChange={(e) => setNewProgress(Number(e.target.value))}
+                            className="w-full h-1 bg-[#33343b] rounded-lg appearance-none cursor-pointer accent-[#c0c1ff]"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Dependencies */}
+                      <div className="space-y-1.5">
+                        <label className="block text-[11px] font-semibold text-[#c7c4d7]">Task Dependencies (Must complete first)</label>
+                        <div className="max-h-24 overflow-y-auto border border-white/5 bg-[#191b22] rounded-lg p-2.5 space-y-1 text-xs">
+                          {tasks.filter(t => !taskToEdit || t.id !== taskToEdit.id).map(t => {
+                            const isChecked = newDependencies.includes(t.id);
+                            return (
+                              <label key={t.id} className="flex items-center gap-2 text-[#c7c4d7] hover:text-white cursor-pointer py-0.5 text-left">
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => {
+                                    if (isChecked) {
+                                      setNewDependencies(prev => prev.filter(id => id !== t.id));
+                                    } else {
+                                      setNewDependencies(prev => [...prev, t.id]);
+                                    }
+                                  }}
+                                  className="rounded border-white/10 bg-[#1e1f26] text-[#c0c1ff] focus:ring-0"
+                                />
+                                <span className="truncate">{t.title}</span>
+                              </label>
+                            );
+                          })}
+                          {tasks.filter(t => !taskToEdit || t.id !== taskToEdit.id).length === 0 && (
+                            <span className="text-[10px] text-[#c7c4d7]/40">No other tasks available.</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex justify-end gap-3 pt-4 border-t border-white/5">
                   <button
                     type="button"
                     onClick={() => setShowAddModal(false)}
-                    className="px-4 py-2 bg-[#1e1f26] hover:bg-[#33343b] rounded-lg text-xs font-semibold border border-white/10 text-[#c7c4d7]"
+                    className="px-4 py-2 bg-[#1e1f26] hover:bg-[#33343b] rounded-lg text-xs font-semibold border border-white/10 text-[#c7c4d7] cursor-pointer"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="px-5 py-2 bg-[#c0c1ff] hover:bg-[#c0c1ff]/90 text-[#1000a9] font-bold text-xs rounded-lg transition-all"
+                    className="px-5 py-2 bg-[#c0c1ff] hover:bg-[#c0c1ff]/90 text-[#1000a9] font-bold text-xs rounded-lg transition-all cursor-pointer"
                   >
                     Add and Analyze
                   </button>
@@ -2347,7 +3426,7 @@ export default function App() {
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="glass-panel-heavy rounded-2xl max-w-lg w-full p-6 md:p-8 space-y-6"
+              className="glass-panel-heavy rounded-2xl max-w-lg w-full max-h-[85vh] overflow-y-auto p-6 md:p-8 space-y-6 scrollbar-thin"
             >
               <div className="flex justify-between items-center border-b border-white/5 pb-3">
                 <h3 className="font-bold text-lg text-white">Edit Task Details</h3>
@@ -2421,17 +3500,196 @@ export default function App() {
                   />
                 </div>
 
+                {/* Advanced smart settings collapsible */}
+                <div className="border-t border-white/5 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvanced(!showAdvanced)}
+                    className="flex items-center gap-1.5 text-xs text-[#c0c1ff] hover:text-white font-semibold focus:outline-none cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">
+                      {showAdvanced ? "expand_less" : "expand_more"}
+                    </span>
+                    Smart Task Engine Parameters
+                  </button>
+                  
+                  {showAdvanced && (
+                    <div className="mt-4 space-y-4 border border-white/5 bg-[#191b22]/30 rounded-xl p-4 animate-fade-in text-left">
+                      {/* Project & Tags */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="block text-[11px] font-semibold text-[#c7c4d7]">Project Folder</label>
+                          <input
+                            type="text"
+                            value={newProject}
+                            onChange={(e) => setNewProject(e.target.value)}
+                            placeholder="e.g. 'ML Course', 'Career'"
+                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="block text-[11px] font-semibold text-[#c7c4d7]">Tags (comma-separated)</label>
+                          <input
+                            type="text"
+                            value={newTagsString}
+                            onChange={(e) => setNewTagsString(e.target.value)}
+                            placeholder="e.g. 'pytorch, academic'"
+                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Difficulty & Energy */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="block text-[11px] font-semibold text-[#c7c4d7]">Complexity / Difficulty</label>
+                          <div className="grid grid-cols-3 gap-1">
+                            {(["Easy", "Medium", "Hard"] as const).map(diff => (
+                              <button
+                                type="button"
+                                key={diff}
+                                onClick={() => setNewDifficulty(diff)}
+                                className={`py-1.5 rounded text-[10px] font-semibold border transition-all cursor-pointer ${
+                                  newDifficulty === diff 
+                                    ? "bg-[#c0c1ff]/15 text-[#c0c1ff] border-[#c0c1ff]/50" 
+                                    : "bg-[#1e1f26] border-white/5 text-[#c7c4d7]"
+                                }`}
+                              >
+                                {diff}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="block text-[11px] font-semibold text-[#c7c4d7]">Energy Requirement</label>
+                          <div className="grid grid-cols-3 gap-1">
+                            {(["Low", "Medium", "High"] as const).map(energy => (
+                              <button
+                                type="button"
+                                key={energy}
+                                onClick={() => setNewEnergyRequirement(energy)}
+                                className={`py-1.5 rounded text-[10px] font-semibold border transition-all cursor-pointer ${
+                                  newEnergyRequirement === energy 
+                                    ? "bg-[#c0c1ff]/15 text-[#c0c1ff] border-[#c0c1ff]/50" 
+                                    : "bg-[#1e1f26] border-white/5 text-[#c7c4d7]"
+                                }`}
+                              >
+                                {energy}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Focus Requirement & Risk Level */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="block text-[11px] font-semibold text-[#c7c4d7]">Focus State</label>
+                          <select
+                            value={newFocusRequirement}
+                            onChange={(e: any) => setNewFocusRequirement(e.target.value)}
+                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
+                          >
+                            <option value="Low Focus">Low Focus (Light Tasks)</option>
+                            <option value="Medium Focus">Medium Focus (Standard Tasks)</option>
+                            <option value="High Focus">High Focus (Heavier Tasks)</option>
+                            <option value="Deep Focus">Deep Focus (Undistracted Sprint)</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="block text-[11px] font-semibold text-[#c7c4d7]">Risk Level</label>
+                          <select
+                            value={newRiskLevel}
+                            onChange={(e: any) => setNewRiskLevel(e.target.value)}
+                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
+                          >
+                            <option value="Low">Low Risk</option>
+                            <option value="Medium">Medium Risk</option>
+                            <option value="High">High Risk</option>
+                            <option value="Critical">Critical Risk</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Probability & Progress */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between text-[11px] text-[#c7c4d7]">
+                            <span className="font-semibold">Success Probability</span>
+                            <span className="font-mono font-bold text-[#c0c1ff]">{newCompletionProbability}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            value={newCompletionProbability}
+                            onChange={(e) => setNewCompletionProbability(Number(e.target.value))}
+                            className="w-full h-1 bg-[#33343b] rounded-lg appearance-none cursor-pointer accent-[#c0c1ff]"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between text-[11px] text-[#c7c4d7]">
+                            <span className="font-semibold">Current Task Progress</span>
+                            <span className="font-mono font-bold text-[#c0c1ff]">{newProgress}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            value={newProgress}
+                            onChange={(e) => setNewProgress(Number(e.target.value))}
+                            className="w-full h-1 bg-[#33343b] rounded-lg appearance-none cursor-pointer accent-[#c0c1ff]"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Dependencies */}
+                      <div className="space-y-1.5">
+                        <label className="block text-[11px] font-semibold text-[#c7c4d7]">Task Dependencies (Must complete first)</label>
+                        <div className="max-h-24 overflow-y-auto border border-white/5 bg-[#191b22] rounded-lg p-2.5 space-y-1 text-xs">
+                          {tasks.filter(t => !taskToEdit || t.id !== taskToEdit.id).map(t => {
+                            const isChecked = newDependencies.includes(t.id);
+                            return (
+                              <label key={t.id} className="flex items-center gap-2 text-[#c7c4d7] hover:text-white cursor-pointer py-0.5 text-left">
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => {
+                                    if (isChecked) {
+                                      setNewDependencies(prev => prev.filter(id => id !== t.id));
+                                    } else {
+                                      setNewDependencies(prev => [...prev, t.id]);
+                                    }
+                                  }}
+                                  className="rounded border-white/10 bg-[#1e1f26] text-[#c0c1ff] focus:ring-0"
+                                />
+                                <span className="truncate">{t.title}</span>
+                              </label>
+                            );
+                          })}
+                          {tasks.filter(t => !taskToEdit || t.id !== taskToEdit.id).length === 0 && (
+                            <span className="text-[10px] text-[#c7c4d7]/40">No other tasks available.</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex justify-end gap-3 pt-4 border-t border-white/5">
                   <button
                     type="button"
                     onClick={() => setShowEditModal(false)}
-                    className="px-4 py-2 bg-[#1e1f26] hover:bg-[#33343b] rounded-lg text-xs font-semibold border border-white/10 text-[#c7c4d7]"
+                    className="px-4 py-2 bg-[#1e1f26] hover:bg-[#33343b] rounded-lg text-xs font-semibold border border-white/10 text-[#c7c4d7] cursor-pointer"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="px-5 py-2 bg-[#c0c1ff] hover:bg-[#c0c1ff]/90 text-[#1000a9] font-bold text-xs rounded-lg transition-all"
+                    className="px-5 py-2 bg-[#c0c1ff] hover:bg-[#c0c1ff]/90 text-[#1000a9] font-bold text-xs rounded-lg transition-all cursor-pointer"
                   >
                     Save Changes
                   </button>
@@ -2496,6 +3754,27 @@ export default function App() {
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Global AI Command Palette */}
+      <AnimatePresence>
+        {commandPaletteOpen && (
+          <CommandPalette
+            isOpen={commandPaletteOpen}
+            onClose={() => setCommandPaletteOpen(false)}
+            tasks={tasks}
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            setTasks={setTasks}
+            setSelectedTask={setSelectedTask}
+            showToast={showToast}
+            triggerPrioritize={triggerPrioritize}
+            setFocusTimeTotal={setFocusTimeTotal}
+            setFocusTimeLeft={setFocusTimeLeft}
+            setFocusIsRunning={setFocusIsRunning}
+            setFocusTimerTask={setFocusTimerTask}
+          />
         )}
       </AnimatePresence>
 
