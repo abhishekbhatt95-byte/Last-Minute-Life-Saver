@@ -49,6 +49,7 @@ export default function CommandPalette({
   }, [isOpen]);
 
   const handleExecute = async (promptText: string) => {
+    console.log("[DIAGNOSTIC] CommandPalette handleExecute submission handler fired. promptText:", promptText);
     const trimmed = promptText.trim();
     if (!trimmed) return;
     setLoading(true);

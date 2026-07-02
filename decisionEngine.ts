@@ -50,6 +50,8 @@ function getAIClient(): GoogleGenAI | null {
       } catch (err) {
         console.error("DecisionEngine failed to initialize Gemini Client:", err);
       }
+    } else {
+      console.error("[DIAGNOSTIC] getAIClient fallback activated: GEMINI_API_KEY is either undefined or contains the placeholder 'MY_GEMINI_API_KEY'.");
     }
   }
   return aiClient;
@@ -80,6 +82,7 @@ export function deriveConfidence(topCandidates: CandidateTask[]): { confidence: 
  */
 export async function getWhatNowRecommendation(allTasks: Task[], forceRefresh = false): Promise<Decision> {
   const pending = allTasks.filter(t => t.status === "pending");
+  console.log("[DIAGNOSTIC] pending tasks mapped in decisionEngine:", pending.map(t => ({id: t.id, urgency: t.urgency})));
   if (pending.length === 0) {
     return {
       recommendedTaskId: null,

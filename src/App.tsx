@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Task, Subtask, AIPlannerSuggestion, FocusSession } from "./types";
 import { calculateFocusEfficacy } from "./focusScoring";
 import CommandPalette from "./components/CommandPalette";
 import DecisionSuite from "./components/DecisionSuite";
+import { NamePrompt } from "./components/NamePrompt";
 
 export const COMPLETED_COLOR_TOKEN = "#14b8a6"; // Unified Teal color design token for completion states
 
@@ -135,8 +136,25 @@ export default function App() {
   const [geminiActive, setGeminiActive] = useState<boolean>(false);
 
   // User profile and Focus Timer state (Master Design Part 1)
-  const [userName, setUserName] = useState(() => localStorage.getItem("lifesaver_user_name") || "Abhishek");
-  const [userEmail, setUserEmail] = useState(() => localStorage.getItem("lifesaver_user_email") || "abhishekbhatt9265@gmail.com");
+  const [userName, setUserName] = useState(() => localStorage.getItem("lifesaver_user_name") || "");
+  const [userEmail, setUserEmail] = useState(() => localStorage.getItem("lifesaver_user_email") || "");
+  const [showNamePrompt, setShowNamePrompt] = useState(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const emailInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setShowNamePrompt(true);
+  }, []);
+
+  const handleNameSave = (name: string) => {
+    setUserName(name);
+    localStorage.setItem("lifesaver_user_name", name);
+    setShowNamePrompt(false);
+  };
+
+  const handleNameSkip = () => {
+    setShowNamePrompt(false);
+  };
   const [streak, setStreak] = useState(() => {
     const s = localStorage.getItem("lifesaver_streak");
     return s ? parseInt(s, 10) : 5;
@@ -999,6 +1017,7 @@ export default function App() {
   }, [showAddModal]);
 
   const handleAnalyzeSituation = async () => {
+    console.log("[DIAGNOSTIC] handleAnalyzeSituation click handler fired. situationText:", situationText, "urgency:", entryUrgency, "importance:", entryImportance);
     if (!situationText.trim()) {
       showToast("Please describe your situation first.", "error");
       return;
@@ -1089,6 +1108,7 @@ export default function App() {
     }
 
     try {
+      console.log("[DIAGNOSTIC] handleCreateFromWizard - selected urgency immediately before fetch:", entryUrgency);
       setActionLoading(true);
       const res = await fetch("/api/tasks", {
         method: "POST",
@@ -2017,10 +2037,10 @@ export default function App() {
                         <h1 className="font-sans font-extrabold text-3xl sm:text-4xl text-white tracking-tight">
                           {(() => {
                             const hour = new Date().getHours();
-                            if (hour >= 5 && hour < 12) return `Good Morning, ${userName} 👋`;
-                            if (hour >= 12 && hour < 17) return `Good Afternoon, ${userName} 👋`;
-                            if (hour >= 17 && hour < 20) return `Good Evening, ${userName} 👋`;
-                            return `Good Night, ${userName} 🌙`;
+                            if (hour >= 5 && hour < 12) return userName ? `Good Morning, ${userName} 👋` : "Good Morning 👋";
+                            if (hour >= 12 && hour < 17) return userName ? `Good Afternoon, ${userName} 👋` : "Good Afternoon 👋";
+                            if (hour >= 17 && hour < 20) return userName ? `Good Evening, ${userName} 👋` : "Good Evening 👋";
+                            return userName ? `Good Night, ${userName} 🌙` : "Good Night 🌙";
                           })()}
                         </h1>
                         <p className="font-mono text-xs text-[#14b8a6] font-semibold tracking-wide">
@@ -3763,15 +3783,27 @@ export default function App() {
                       </h3>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                         <div>
-                          <span className="text-[#c7c4d7] block mb-1">Authenticated Account</span>
-                          <span className="text-white font-semibold font-mono">support@lifesaver.ai</span>
+                          <label className="text-[#c7c4d7] block mb-1 text-xs">Name</label>
+                          <input type="text" defaultValue={userName} ref={nameInputRef} className="w-full bg-[#11111b] text-white p-2 rounded border border-[#313244] focus:outline-none focus:border-[#14b8a6] text-xs font-mono" />
                         </div>
                         <div>
-                          <span className="text-[#c7c4d7] block mb-1">Encryption Mode</span>
-                          <span className="text-[#4edea3] font-semibold font-mono flex items-center gap-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#4edea3] animate-pulse"></span>
-                            End-to-End Encrypted (AES-256)
-                          </span>
+                          <label className="text-[#c7c4d7] block mb-1 text-xs">Email</label>
+                          <input type="email" defaultValue={userEmail} ref={emailInputRef} className="w-full bg-[#11111b] text-white p-2 rounded border border-[#313244] focus:outline-none focus:border-[#14b8a6] text-xs font-mono" />
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          const newName = nameInputRef.current?.value || "";
+                          const newEmail = emailInputRef.current?.value || "";
+                          setUserName(newName);
+                          setUserEmail(newEmail);
+                          localStorage.setItem("lifesaver_user_name", newName);
+                          localStorage.setItem("lifesaver_user_email", newEmail);
+                        }}
+                        className="bg-[#14b8a6] text-black font-bold py-2 px-4 rounded hover:bg-[#0e9f8f] text-xs mt-4"
+                      >
+                        Save Profile
+                      </button>
                                    {/* Real Security & Privacy Sections */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       {/* Privacy panel */}
@@ -3849,7 +3881,6 @@ export default function App() {
                           </div>
                         </div>
                       </div>
-                    </div>              </div>
                       </div>
                     </div>
 
@@ -4658,6 +4689,9 @@ export default function App() {
       </AnimatePresence>
 
       {/* Global AI Command Palette */}
+      {showNamePrompt && (
+        <NamePrompt userName={userName} onSave={handleNameSave} onSkip={handleNameSkip} />
+      )}
       <AnimatePresence>
         {commandPaletteOpen && (
           <CommandPalette
