@@ -25,7 +25,7 @@
     inset: -1px;
     border-radius: inherit;
     padding: 1px;
-    background: linear-gradient(135deg, #c0c1ff, #d0bcff);
+    background: linear-gradient(135deg, #14b8a6, #fbbf24);
     -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
     -webkit-mask-composite: xor;
     mask-composite: exclude;
@@ -34,7 +34,7 @@
   }
 
   .timeline-gradient {
-    background: linear-gradient(to bottom, #c0c1ff 0%, #d0bcff 50%, rgba(208, 188, 255, 0) 100%);
+    background: linear-gradient(to bottom, #14b8a6 0%, #fbbf24 50%, rgba(251, 191, 36, 0) 100%);
   }
 
   .progress-bar-stripes {
@@ -118,3 +118,34 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(192, 193, 255, 0.4);
 }
+
+.glow-sweep-bg {
+  position: relative;
+  overflow: hidden;
+}
+
+.glow-sweep-bg::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(20, 184, 166, 0.14) 50%,
+    transparent 100%
+  );
+  transform: translateX(-150%);
+  animation: glow-sweep-bg 4s linear infinite;
+  will-change: transform;
+  pointer-events: none;
+  z-index: 0;
+}
+
+@keyframes glow-sweep-bg {
+  0%   { transform: translateX(-150%); }
+  100% { transform: translateX(250%); }
+}
+

@@ -203,7 +203,7 @@ export default function CommandPalette({
             {query.trim() && !loading && (
               <button
                 onClick={() => handleExecute(query)}
-                className="bg-[#c0c1ff]/10 hover:bg-[#c0c1ff]/20 text-[#c0c1ff] text-[10px] font-mono px-2 py-1 rounded border border-[#c0c1ff]/20 transition-all cursor-pointer mr-1"
+                className="bg-[#14b8a6]/10 hover:bg-[#14b8a6]/20 text-[#14b8a6] text-[10px] font-mono px-2 py-1 rounded border border-[#14b8a6]/20 transition-all cursor-pointer mr-1"
               >
                 ↵ Enter
               </button>
@@ -220,8 +220,8 @@ export default function CommandPalette({
           {loading && (
             <div className="py-12 flex flex-col items-center justify-center space-y-4">
               <div className="relative flex items-center justify-center">
-                <span className="material-symbols-outlined text-4xl text-[#c0c1ff] animate-spin-slow">auto_awesome</span>
-                <span className="absolute inset-0 bg-[#c0c1ff]/10 blur-xl rounded-full"></span>
+                <span className="material-symbols-outlined text-4xl text-[#14b8a6] animate-spin-slow">auto_awesome</span>
+                <span className="absolute inset-0 bg-[#14b8a6]/10 blur-xl rounded-full"></span>
               </div>
               <div className="text-center">
                 <h4 className="font-sans font-bold text-sm text-white animate-pulse">Analyzing command context...</h4>
@@ -234,8 +234,8 @@ export default function CommandPalette({
           {!loading && response && (
             <div className="space-y-4 animate-fade-in">
               <div className="flex items-center gap-2 border-b border-white/5 pb-2">
-                <span className="material-symbols-outlined text-[#c0c1ff] text-[18px]">psychology</span>
-                <span className="font-mono text-[10px] text-[#c0c1ff] uppercase tracking-widest font-semibold">AI Assistant Response</span>
+                <span className="material-symbols-outlined text-[#14b8a6] text-[18px]">psychology</span>
+                <span className="font-mono text-[10px] text-[#14b8a6] uppercase tracking-widest font-semibold">AI Assistant Response</span>
               </div>
               
               <div className="p-4 rounded-xl bg-white/5 border border-white/5 text-xs text-[#e2e2eb] leading-relaxed whitespace-pre-wrap font-sans">
@@ -244,8 +244,8 @@ export default function CommandPalette({
 
               {/* Specific interactive actions */}
               {result && result.action === "create_task" && result.extractedData && (
-                <div className="p-4 rounded-xl bg-[#c0c1ff]/5 border border-[#c0c1ff]/20 space-y-3">
-                  <div className="flex items-center gap-1.5 text-[#c0c1ff] font-mono text-[10px] uppercase tracking-wider font-bold">
+                <div className="p-4 rounded-xl bg-[#14b8a6]/5 border border-[#14b8a6]/20 space-y-3">
+                  <div className="flex items-center gap-1.5 text-[#14b8a6] font-mono text-[10px] uppercase tracking-wider font-bold">
                     <span className="material-symbols-outlined text-[16px]">add_task</span>
                     Confirm Detected Task Details
                   </div>
@@ -283,7 +283,7 @@ export default function CommandPalette({
                     </button>
                     <button
                       onClick={handleConfirmCreateTask}
-                      className="px-4 py-1.5 bg-[#c0c1ff] hover:bg-[#c0c1ff]/90 text-[#1000a9] font-bold text-xs rounded-lg transition-all cursor-pointer"
+                      className="px-4 py-1.5 bg-[#14b8a6] hover:bg-[#14b8a6]/90 text-[#022c22] font-bold text-xs rounded-lg transition-all cursor-pointer"
                     >
                       Confirm and Create Task
                     </button>
@@ -320,9 +320,9 @@ export default function CommandPalette({
                         setQuery(act.prompt);
                         handleExecute(act.prompt);
                       }}
-                      className="flex items-center gap-3 p-3 rounded-xl border border-white/5 bg-[#1a1b22]/30 hover:bg-[#c0c1ff]/10 hover:border-[#c0c1ff]/20 transition-all text-left group cursor-pointer"
+                      className="flex items-center gap-3 p-3 rounded-xl border border-white/5 bg-[#1a1b22]/30 hover:bg-[#14b8a6]/10 hover:border-[#14b8a6]/20 transition-all text-left group cursor-pointer"
                     >
-                      <span className="material-symbols-outlined text-[#c7c4d7]/80 group-hover:text-[#c0c1ff] transition-colors text-[18px]">
+                      <span className="material-symbols-outlined text-[#c7c4d7]/80 group-hover:text-[#14b8a6] transition-colors text-[18px]">
                         {act.icon}
                       </span>
                       <span className="text-xs font-semibold text-[#e2e2eb] group-hover:text-white transition-colors">
@@ -359,7 +359,7 @@ export default function CommandPalette({
         {/* Footer info badge */}
         <div className="border-t border-white/5 px-5 py-3 bg-[#13141a]/90 flex items-center justify-between text-[10px] font-mono text-[#c7c4d7]/50">
           <span className="flex items-center gap-1">
-            <span className="material-symbols-outlined text-[12px] text-[#c0c1ff] animate-pulse">auto_awesome</span>
+            <span className="material-symbols-outlined text-[12px] text-[#14b8a6] animate-pulse">auto_awesome</span>
             AI Command Center Enabled
           </span>
           <span>Use ⌘K or Ctrl+K to toggle anywhere</span>

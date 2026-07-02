@@ -18,6 +18,7 @@ export interface Task {
   importance: "Low" | "Medium" | "High"; // Standard Priority level
   status: "pending" | "completed";
   createdAt: string;
+  urgency?: "Relaxed" | "Normal" | "Important" | "Urgent" | "Critical";
 
   // Smart Task System - Phase 3 additions
   difficulty: "Easy" | "Medium" | "Hard";
@@ -56,4 +57,21 @@ export interface AIPlannerSuggestion {
 export interface AIPlannerResponse {
   responseText: string;
   suggestedTasks: AIPlannerSuggestion[];
+}
+
+export type FocusSessionOutcome = "completed" | "abandoned" | "overrun" | "cancelled";
+
+export interface FocusSession {
+  id: string;
+  taskId: string | null;
+  startedAt: string; // ISO String
+  endedAt: string | null; // ISO String
+  plannedDurationMinutes: number;
+  actualDurationMinutes: number;
+  outcome: FocusSessionOutcome | null; // null if active
+  interruptionCount: number;
+  pauseCount: number;
+  totalPausedMinutes: number;
+  createdAt: string; // ISO String
+  updatedAt: string; // ISO String
 }

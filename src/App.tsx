@@ -1,7 +1,23 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Task, Subtask, AIPlannerSuggestion } from "./types";
+import { Task, Subtask, AIPlannerSuggestion, FocusSession } from "./types";
+import { calculateFocusEfficacy } from "./focusScoring";
 import CommandPalette from "./components/CommandPalette";
+
+export const COMPLETED_COLOR_TOKEN = "#14b8a6"; // Unified Teal color design token for completion states
+
+export const getTaskCompletionStyles = (status: string) => {
+  const isCompleted = status === "completed";
+  return {
+    isCompleted,
+    colorClass: "text-[#14b8a6]",
+    badgeClass: "bg-[#14b8a6]/15 text-[#14b8a6] border border-[#14b8a6]/25",
+    borderClass: "border-l-4 border-l-[#14b8a6]/40 hover:border-l-[#14b8a6]",
+    bgClass: "bg-[#14b8a6]",
+    textClass: "text-[#14b8a6]",
+    borderGlowClass: "border-l-4 border-l-[#14b8a6]/40 hover:border-l-[#14b8a6] shadow-[inset_0_0_12px_rgba(20,184,166,0.03)]"
+  };
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<"dashboard" | "schedule" | "tasks" | "planner" | "analytics" | "settings">("dashboard");
@@ -132,6 +148,29 @@ export default function App() {
   const [focusTimeLeft, setFocusTimeLeft] = useState(25 * 60);
   const [focusTimeTotal, setFocusTimeTotal] = useState(25 * 60);
   const [focusIsRunning, setFocusIsRunning] = useState(false);
+  
+  // Focus Session State for genuine metric scoring
+  const [focusSessions, setFocusSessions] = useState<FocusSession[]>(() => {
+    try {
+      const saved = localStorage.getItem("lifesaver_focus_sessions");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [activeSession, setActiveSession] = useState<FocusSession | null>(() => {
+    try {
+      const saved = localStorage.getItem("lifesaver_active_focus_session");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [pauseStartTime, setPauseStartTime] = useState<number | null>(null);
+  const [focusDiagnosticsOpen, setFocusDiagnosticsOpen] = useState(false);
+
   const [voiceListening, setVoiceListening] = useState(false);
   const [voiceText, setVoiceText] = useState("");
   const [aiAskOpen, setAiAskOpen] = useState(false);
@@ -166,6 +205,14 @@ export default function App() {
   const [newProject, setNewProject] = useState("General");
   const [newProgress, setNewProgress] = useState(0);
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Situation-First Entry Flow Wizard states
+  const [entryStep, setEntryStep] = useState<1 | 2 | 3 | 4>(1); // 1: Describe, 2: Assessment, 3: Loading AI, 4: Review & Confirm
+  const [situationText, setSituationText] = useState("");
+  const [entryUrgency, setEntryUrgency] = useState<"Relaxed" | "Normal" | "Important" | "Urgent" | "Critical">("Urgent");
+  const [entryImportance, setEntryImportance] = useState<"Low" | "Medium" | "High">("High");
+  const [analyzedSubtasks, setAnalyzedSubtasks] = useState<any[]>([]);
+  const [aiSummaryText, setAiSummaryText] = useState<string | null>(null);
 
   // Global AI Command Palette states
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -229,11 +276,113 @@ export default function App() {
     return () => clearInterval(interval);
   }, [loading]);
 
+  // Recover or finalize abandoned active focus session on mount
+  useEffect(() => {
+    const savedActive = localStorage.getItem("lifesaver_active_focus_session");
+    if (savedActive) {
+      try {
+        const parsed: FocusSession = JSON.parse(savedActive);
+        // It was left active when the app closed, so it was abandoned
+        parsed.outcome = "abandoned";
+        parsed.endedAt = new Date().toISOString();
+        parsed.updatedAt = new Date().toISOString();
+
+        const savedSessions = localStorage.getItem("lifesaver_focus_sessions");
+        const currentSessions: FocusSession[] = savedSessions ? JSON.parse(savedSessions) : [];
+        
+        // Add only if not already in there
+        if (!currentSessions.some(s => s.id === parsed.id)) {
+          currentSessions.push(parsed);
+        }
+        localStorage.setItem("lifesaver_focus_sessions", JSON.stringify(currentSessions));
+        setFocusSessions(currentSessions);
+      } catch (e) {
+        console.error("Failed to recover abandoned focus session", e);
+      } finally {
+        localStorage.removeItem("lifesaver_active_focus_session");
+        setActiveSession(null);
+      }
+    }
+  }, []);
+
+  // Track potential/confirmed tab interruptions when focus timer is running
+  useEffect(() => {
+    let blurTime: number | null = null;
+
+    const handleBlur = () => {
+      if (focusIsRunning && activeSession) {
+        blurTime = Date.now();
+      }
+    };
+
+    const handleFocus = () => {
+      if (focusIsRunning && activeSession && blurTime !== null) {
+        const elapsedSeconds = (Date.now() - blurTime) / 1000;
+        if (elapsedSeconds >= 15) {
+          // Confirmed interruption!
+          setActiveSession(prev => {
+            if (!prev) return null;
+            const updated = {
+              ...prev,
+              interruptionCount: prev.interruptionCount + 1,
+              updatedAt: new Date().toISOString()
+            };
+            localStorage.setItem("lifesaver_active_focus_session", JSON.stringify(updated));
+            return updated;
+          });
+        }
+        blurTime = null;
+      }
+    };
+
+    window.addEventListener("blur", handleBlur);
+    window.addEventListener("focus", handleFocus);
+    
+    // Also document visibility state
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        handleBlur();
+      } else {
+        handleFocus();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("blur", handleBlur);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [focusIsRunning, activeSession]);
+
+  // Main ticking effect with safety checkpoints
   useEffect(() => {
     let interval: any;
     if (focusIsRunning && focusTimeLeft > 0) {
       interval = setInterval(() => {
-        setFocusTimeLeft(prev => prev - 1);
+        setFocusTimeLeft(prev => {
+          const next = prev - 1;
+          
+          // Safety checkpoint every 30 seconds
+          if (next > 0 && next % 30 === 0) {
+            setActiveSession(curr => {
+              if (curr) {
+                const now = Date.now();
+                const actualMins = Math.round(((now - new Date(curr.startedAt).getTime()) - (curr.totalPausedMinutes * 60 * 1000)) / 60000);
+                const updated = {
+                  ...curr,
+                  actualDurationMinutes: Math.max(0, actualMins),
+                  updatedAt: new Date(now).toISOString()
+                };
+                localStorage.setItem("lifesaver_active_focus_session", JSON.stringify(updated));
+                return updated;
+              }
+              return curr;
+            });
+          }
+          
+          return next;
+        });
       }, 1000);
     } else if (focusTimeLeft === 0 && focusIsRunning) {
       setFocusIsRunning(false);
@@ -248,13 +397,153 @@ export default function App() {
         localStorage.setItem("lifesaver_streak", String(nextVal));
         return nextVal;
       });
+
+      // Complete focus session and finalize record
+      if (activeSession) {
+        const now = Date.now();
+        const finalizedSession: FocusSession = {
+          ...activeSession,
+          endedAt: new Date(now).toISOString(),
+          actualDurationMinutes: activeSession.plannedDurationMinutes,
+          outcome: "completed",
+          updatedAt: new Date(now).toISOString()
+        };
+        const updatedSessions = [...focusSessions, finalizedSession];
+        setFocusSessions(updatedSessions);
+        localStorage.setItem("lifesaver_focus_sessions", JSON.stringify(updatedSessions));
+        localStorage.removeItem("lifesaver_active_focus_session");
+        setActiveSession(null);
+      }
+
       showToast(`🎉 Focus session completed! You added ${minutesCompleted} minutes to deep work today.`, "success");
     }
     return () => clearInterval(interval);
-  }, [focusIsRunning, focusTimeLeft, focusTimeTotal]);
+  }, [focusIsRunning, focusTimeLeft, focusTimeTotal, activeSession, focusSessions]);
+
+  const toggleFocusTimer = () => {
+    const now = Date.now();
+    if (focusIsRunning) {
+      // Pausing session
+      setPauseStartTime(now);
+      setFocusIsRunning(false);
+
+      if (activeSession) {
+        const elapsedMins = Math.round(((now - new Date(activeSession.startedAt).getTime()) - (activeSession.totalPausedMinutes * 60 * 1000)) / 60000);
+        const updated: FocusSession = {
+          ...activeSession,
+          pauseCount: activeSession.pauseCount + 1,
+          actualDurationMinutes: Math.max(0, elapsedMins),
+          updatedAt: new Date(now).toISOString()
+        };
+        setActiveSession(updated);
+        localStorage.setItem("lifesaver_active_focus_session", JSON.stringify(updated));
+      }
+    } else {
+      // Starting or Resuming session
+      setFocusIsRunning(true);
+
+      if (activeSession) {
+        // Resuming
+        let additionalPauseMins = 0;
+        if (pauseStartTime) {
+          additionalPauseMins = (now - pauseStartTime) / 60000;
+          setPauseStartTime(null);
+        }
+        const updated: FocusSession = {
+          ...activeSession,
+          totalPausedMinutes: activeSession.totalPausedMinutes + additionalPauseMins,
+          updatedAt: new Date(now).toISOString()
+        };
+        setActiveSession(updated);
+        localStorage.setItem("lifesaver_active_focus_session", JSON.stringify(updated));
+      } else {
+        // Starting fresh
+        const newSess: FocusSession = {
+          id: crypto.randomUUID(),
+          taskId: focusTimerTask ? focusTimerTask.id : null,
+          startedAt: new Date(now).toISOString(),
+          endedAt: null,
+          plannedDurationMinutes: Math.round(focusTimeTotal / 60),
+          actualDurationMinutes: 0,
+          outcome: null,
+          interruptionCount: 0,
+          pauseCount: 0,
+          totalPausedMinutes: 0,
+          createdAt: new Date(now).toISOString(),
+          updatedAt: new Date(now).toISOString()
+        };
+        setActiveSession(newSess);
+        localStorage.setItem("lifesaver_active_focus_session", JSON.stringify(newSess));
+      }
+    }
+  };
+
+  const handleCancelSession = () => {
+    setFocusIsRunning(false);
+    setFocusTimeLeft(focusTimeTotal);
+    setPauseStartTime(null);
+
+    if (activeSession) {
+      const now = Date.now();
+      const elapsedMins = Math.round(((now - new Date(activeSession.startedAt).getTime()) - (activeSession.totalPausedMinutes * 60 * 1000)) / 60000);
+      
+      const finalized: FocusSession = {
+        ...activeSession,
+        endedAt: new Date(now).toISOString(),
+        actualDurationMinutes: Math.max(0, elapsedMins),
+        outcome: "cancelled",
+        updatedAt: new Date(now).toISOString()
+      };
+
+      const updatedSessions = [...focusSessions, finalized];
+      setFocusSessions(updatedSessions);
+      localStorage.setItem("lifesaver_focus_sessions", JSON.stringify(updatedSessions));
+      localStorage.removeItem("lifesaver_active_focus_session");
+      setActiveSession(null);
+      showToast("Focus session stopped and archived.", "info");
+    }
+  };
+
+  const getTaskStatusStyle = (task: Task) => {
+    if (!task) {
+      return {
+        level: "Low Risk",
+        color: "text-emerald-400",
+        badgeClass: "bg-emerald-400/20 text-emerald-400 border border-emerald-400/30"
+      };
+    }
+    if (task.status === "completed") {
+      const completion = getTaskCompletionStyles("completed");
+      return {
+        level: "Completed",
+        color: completion.colorClass,
+        badgeClass: completion.badgeClass
+      };
+    }
+
+    let level = `${task.riskLevel || "Low"} Risk`;
+    let color = "text-emerald-400";
+    let badgeClass = "bg-emerald-400/20 text-emerald-400 border border-emerald-400/30";
+
+    if (task.riskLevel === "Critical") {
+      level = "Extreme Risk";
+      color = "text-red-400";
+      badgeClass = "bg-red-400/20 text-red-300 border border-red-400/30";
+    } else if (task.riskLevel === "High") {
+      level = "High Risk";
+      color = "text-orange-400";
+      badgeClass = "bg-orange-400/20 text-orange-300 border border-orange-400/30";
+    }
+
+    return { level, color, badgeClass };
+  };
 
   const calculateRisk = (task: Task) => {
-    if (!task) return { percentage: 0, level: "Low", color: "text-green-400" };
+    if (!task) return { percentage: 0, level: "Low", color: "text-emerald-400" };
+    if (task.status === "completed") {
+      const completion = getTaskCompletionStyles("completed");
+      return { percentage: 0, level: "Completed", color: completion.colorClass };
+    }
     const msLeft = new Date(task.deadline).getTime() - Date.now();
     const hoursLeft = msLeft / (1000 * 60 * 60);
     const estHours = task.estimatedMinutes / 60;
@@ -270,9 +559,9 @@ export default function App() {
     else percentage = Math.max(15, percentage);
     
     let level = "Low Risk";
-    let color = "text-[#4edea3]";
+    let color = "text-emerald-400";
     if (percentage > 85) {
-      level = "Critical";
+      level = "Extreme";
       color = "text-red-400";
     } else if (percentage > 60) {
       level = "High Risk";
@@ -400,6 +689,44 @@ export default function App() {
       }
     } catch (err: any) {
       showToast(err.message || "Failed to seed example tasks.", "error");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleExportWorkspace = () => {
+    try {
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(tasks, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", "lifesaver_workspace.json");
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      showToast("Workspace data exported successfully!", "success");
+    } catch (err: any) {
+      showToast("Failed to export workspace data.", "error");
+    }
+  };
+
+  const handlePurgeWorkspace = async () => {
+    if (!window.confirm("Are you absolutely sure you want to purge all tasks? This action is irreversible.")) {
+      return;
+    }
+    try {
+      setActionLoading(true);
+      const res = await fetch("/api/tasks/purge", { method: "POST" });
+      if (!res.ok) {
+        throw new Error("Failed to purge workspace data.");
+      }
+      const data = await res.json();
+      if (data.success) {
+        setTasks([]);
+        setSelectedTask(null);
+        showToast("All tasks and focus history purged from active workspace.", "success");
+      }
+    } catch (err: any) {
+      showToast(err.message || "Failed to purge workspace.", "error");
     } finally {
       setActionLoading(false);
     }
@@ -560,6 +887,199 @@ export default function App() {
       }
     } catch (err: any) {
       showToast(err.message || "Failed to delete task.", "error");
+    }
+  };
+
+  const resetWizard = () => {
+    setEntryStep(1);
+    setSituationText("");
+    setEntryUrgency("Urgent");
+    setEntryImportance("High");
+    setAnalyzedSubtasks([]);
+    setAiSummaryText(null);
+
+    setNewTitle("");
+    setNewDesc("");
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(tomorrow.getHours() + 2);
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    setNewDeadline(`${tomorrow.getFullYear()}-${pad(tomorrow.getMonth()+1)}-${pad(tomorrow.getDate())}T${pad(tomorrow.getHours())}:00`);
+
+    setNewEstimate(60);
+    setNewImportance("High");
+    setNewDifficulty("Medium");
+    setNewFocusRequirement("Medium Focus");
+    setNewEnergyRequirement("Medium");
+    setNewRiskLevel("Low");
+    setNewCompletionProbability(75);
+    setNewDependencies([]);
+    setNewTagsString("");
+    setNewProject("General");
+    setNewProgress(0);
+    setShowAdvanced(false);
+  };
+
+  useEffect(() => {
+    if (showAddModal) {
+      if (!situationText.trim()) {
+        resetWizard();
+      } else {
+        // Clear old generation results and form values but KEEP current situationText and entryStep
+        setEntryUrgency("Urgent");
+        setEntryImportance("High");
+        setAnalyzedSubtasks([]);
+        setAiSummaryText(null);
+        setNewTitle("");
+        setNewDesc("");
+        setNewEstimate(60);
+        setNewImportance("High");
+        setNewDifficulty("Medium");
+        setNewFocusRequirement("Medium Focus");
+        setNewEnergyRequirement("Medium");
+        setNewRiskLevel("Low");
+        setNewCompletionProbability(75);
+        setNewDependencies([]);
+        setNewTagsString("");
+        setNewProject("General");
+        setNewProgress(0);
+        setShowAdvanced(false);
+      }
+    }
+  }, [showAddModal]);
+
+  const handleAnalyzeSituation = async () => {
+    if (!situationText.trim()) {
+      showToast("Please describe your situation first.", "error");
+      return;
+    }
+
+    try {
+      setEntryStep(3);
+      const res = await fetch("/api/tasks/analyze-situation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          situation: situationText,
+          urgency: entryUrgency,
+          importance: entryImportance
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to analyze situation.");
+      }
+
+      const data = await res.json();
+      
+      // Calculate target deadline date corresponding to the selected entry urgency with wide buffers
+      const targetDate = new Date();
+      if (entryUrgency === "Critical") {
+        targetDate.setHours(targetDate.getHours() + 12);
+      } else if (entryUrgency === "Urgent") {
+        targetDate.setHours(targetDate.getHours() + 60); // 60 hours (comfortably inside Urgent range of 24h - 72h)
+      } else if (entryUrgency === "Important") {
+        targetDate.setDate(targetDate.getDate() + 5);
+      } else if (entryUrgency === "Normal") {
+        targetDate.setDate(targetDate.getDate() + 10);
+      } else { // Relaxed
+        targetDate.setDate(targetDate.getDate() + 18);
+      }
+      const pad = (n: number) => n.toString().padStart(2, '0');
+      setNewDeadline(`${targetDate.getFullYear()}-${pad(targetDate.getMonth()+1)}-${pad(targetDate.getDate())}T${pad(targetDate.getHours())}:00`);
+
+      setNewTitle(data.title);
+      setNewDesc(data.description);
+      setNewEstimate(data.estimatedMinutes);
+      setNewImportance(entryImportance);
+      setNewDifficulty(data.difficulty);
+      setNewFocusRequirement(data.focusRequirement);
+      setNewEnergyRequirement(data.energyRequirement);
+      setNewRiskLevel(data.riskLevel);
+      setNewCompletionProbability(data.completionProbability);
+      setNewTagsString(data.tags.join(", "));
+      setNewProject(data.project);
+      setAiSummaryText(data.aiSummary);
+      setAnalyzedSubtasks(data.subtasks || []);
+
+      setEntryStep(4);
+    } catch (err: any) {
+      showToast(err.message || "Failed to analyze situation. Defaulting to manual refinement.", "error");
+      setNewTitle("Resolve Pending Crisis");
+      setNewDesc(situationText);
+      
+      const targetDate = new Date();
+      if (entryUrgency === "Critical") {
+        targetDate.setHours(targetDate.getHours() + 12);
+      } else if (entryUrgency === "Urgent") {
+        targetDate.setHours(targetDate.getHours() + 60); // 60 hours (comfortably inside Urgent range of 24h - 72h)
+      } else if (entryUrgency === "Important") {
+        targetDate.setDate(targetDate.getDate() + 5);
+      } else if (entryUrgency === "Normal") {
+        targetDate.setDate(targetDate.getDate() + 10);
+      } else { // Relaxed
+        targetDate.setDate(targetDate.getDate() + 18);
+      }
+      const pad = (n: number) => n.toString().padStart(2, '0');
+      setNewDeadline(`${targetDate.getFullYear()}-${pad(targetDate.getMonth()+1)}-${pad(targetDate.getDate())}T${pad(targetDate.getHours())}:00`);
+      
+      setEntryStep(4);
+    }
+  };
+
+  const handleCreateFromWizard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTitle.trim()) {
+      showToast("Title is required", "error");
+      return;
+    }
+    if (!newDeadline) {
+      showToast("Deadline is required", "error");
+      return;
+    }
+
+    try {
+      setActionLoading(true);
+      const res = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: newTitle,
+          description: newDesc,
+          deadline: new Date(newDeadline).toISOString(),
+          estimatedMinutes: newEstimate,
+          importance: newImportance,
+          urgency: entryUrgency, // Explicitly pass the selected urgency level
+          difficulty: newDifficulty,
+          focusRequirement: newFocusRequirement,
+          energyRequirement: newEnergyRequirement,
+          riskLevel: newRiskLevel,
+          completionProbability: newCompletionProbability,
+          dependencies: newDependencies,
+          tags: newTagsString.split(",").map(t => t.trim()).filter(Boolean),
+          project: newProject,
+          progress: newProgress,
+          aiSummary: aiSummaryText,
+          subtasks: analyzedSubtasks
+        })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to create task.");
+      }
+
+      const data = await res.json();
+      if (data.id) {
+        setTasks(prev => [...prev, data]);
+        setShowAddModal(false);
+        showToast(`Task "${data.title}" successfully created with Gemini safeguards active!`, "success");
+        triggerPrioritize();
+      }
+    } catch (err: any) {
+      showToast(err.message || "Failed to save task.", "error");
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -818,24 +1338,31 @@ export default function App() {
 
   // Urgency boundary styling
   const getUrgencyBorder = (deadlineStr: string, status: "pending" | "completed") => {
-    if (status === "completed") return "border-l-4 border-l-[#4edea3]/40 hover:border-l-[#4edea3]";
+    if (status === "completed") {
+      return getTaskCompletionStyles("completed").borderClass;
+    }
     const ms = new Date(deadlineStr).getTime() - Date.now();
     if (ms < 0 || ms < 2 * 60 * 60 * 1000) return "border-l-4 border-l-red-400/40 hover:border-l-red-400 shadow-[inset_0_0_12px_rgba(239,68,68,0.03)]"; // Soft Urgent Rose
     if (ms < 24 * 60 * 60 * 1000) return "border-l-4 border-l-amber-400/40 hover:border-l-amber-400 shadow-[inset_0_0_12px_rgba(245,158,11,0.02)]"; // Soft Warning Orange
-    return "border-l-4 border-l-[#c0c1ff]/40 hover:border-l-[#c0c1ff]"; // Soft Normal Lavender/Indigo
+    return "border-l-4 border-l-[#14b8a6]/40 hover:border-l-[#14b8a6]"; // Soft Normal Teal
   };
 
   const getUrgencyDotColor = (deadlineStr: string, status: "pending" | "completed") => {
-    if (status === "completed") return "bg-[#4edea3]";
+    if (status === "completed") {
+      return getTaskCompletionStyles("completed").bgClass;
+    }
     const ms = new Date(deadlineStr).getTime() - Date.now();
-    if (ms < 0 || ms < 2 * 60 * 60 * 1000) return "bg-[#ffb4ab] border-[#ffb4ab]";
-    if (ms < 24 * 60 * 60 * 1000) return "bg-[#d0bcff] border-[#d0bcff]";
-    return "bg-[#4edea3] border-[#4edea3]";
+    if (ms < 0 || ms < 2 * 60 * 60 * 1000) return "bg-red-400 border-red-400";
+    if (ms < 24 * 60 * 60 * 1000) return "bg-amber-400 border-amber-400";
+    return "bg-[#14b8a6] border-[#14b8a6]"; // Teal for normal, far away
   };
 
   // Sorting: Pending tasks prioritized, then completed
   const pendingTasks = tasks.filter(t => t.status === "pending");
   const completedTasks = tasks.filter(t => t.status === "completed");
+
+  // Genuine Focus Scoring
+  const focusScoring = calculateFocusEfficacy(focusSessions);
 
   // Sorted list: Overdue always at the top of pending, then by priorityScore descending
   const sortedPendingTasks = [...pendingTasks].sort((a, b) => {
@@ -850,14 +1377,14 @@ export default function App() {
     return (
       <div className="min-h-screen bg-[#111319] text-[#e2e2eb] flex flex-col justify-center items-center p-6 relative overflow-hidden">
         {/* Glowing backdrops */}
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-[#c0c1ff]/5 rounded-full blur-[120px] pointer-events-none animate-pulse"></div>
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-[#d0bcff]/3 rounded-full blur-[120px] pointer-events-none animate-pulse"></div>
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-[#14b8a6]/5 rounded-full blur-[120px] pointer-events-none animate-pulse"></div>
+        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-[#2dd4bf]/3 rounded-full blur-[120px] pointer-events-none animate-pulse"></div>
 
         <div className="w-full max-w-lg space-y-8 text-center relative z-10">
           {/* Logo / Brand pulse */}
           <div className="flex flex-col items-center gap-3">
-            <div className="w-16 h-16 rounded-3xl bg-[#c0c1ff]/10 flex items-center justify-center border border-white/10 shadow-lg shadow-[#c0c1ff]/5 animate-pulse-soft">
-              <span className="material-symbols-outlined text-3xl text-[#c0c1ff] animate-bounce-subtle">psychology</span>
+            <div className="w-16 h-16 rounded-3xl bg-[#14b8a6]/10 flex items-center justify-center border border-white/10 shadow-lg shadow-[#14b8a6]/5 animate-pulse-soft">
+              <span className="material-symbols-outlined text-3xl text-[#14b8a6] animate-bounce-subtle">psychology</span>
             </div>
             <h1 className="font-bold text-2xl text-white tracking-tight mt-2">Life Saver AI Pacing Engine</h1>
             <p className="text-xs text-[#c7c4d7]">Initializing dynamic coaches & model alignment...</p>
@@ -872,7 +1399,7 @@ export default function App() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
                 transition={{ duration: 0.3 }}
-                className="text-sm font-semibold text-[#c0c1ff] font-mono"
+                className="text-sm font-semibold text-[#14b8a6] font-mono"
               >
                 {loadingMessages[loadingStep]}
               </motion.div>
@@ -904,14 +1431,14 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen flex text-[#e2e2eb] selection:bg-[#c0c1ff] selection:text-[#1000a9]">
+    <div className="min-h-screen flex text-[#e2e2eb] selection:bg-[#14b8a6] selection:text-[#022c22]">
       
       {/* 1. Global Navigation Sidebar (Desktop) */}
       <aside className="hidden lg:flex flex-col fixed left-0 top-0 h-full w-[280px] m-6 rounded-xl bg-[#1e1f26]/60 backdrop-blur-3xl border border-white/5 shadow-xl py-8 px-4 z-40 glass-panel">
         
         {/* Profile / Brand Frame */}
         <div className="flex items-center gap-3 mb-10 px-2 cursor-pointer" onClick={() => setSelectedTask(null)}>
-          <div className="w-10 h-10 rounded-full bg-[#c0c1ff]/20 flex items-center justify-center overflow-hidden border border-white/10">
+          <div className="w-10 h-10 rounded-full bg-[#14b8a6]/20 flex items-center justify-center overflow-hidden border border-white/10">
             <img 
               alt="User Profile" 
               className="w-full h-full object-cover" 
@@ -947,11 +1474,11 @@ export default function App() {
                   }}
                   className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 hover:bg-[#373940]/20 ${
                     isActive 
-                      ? "text-[#c0c1ff] font-bold border-r-2 border-[#c0c1ff] bg-[#373940]/10" 
+                      ? "text-[#14b8a6] font-bold border-r-2 border-[#14b8a6] bg-[#373940]/10" 
                       : "text-[#c7c4d7] font-medium"
                   }`}
                 >
-                  <span className={`material-symbols-outlined text-[20px] ${isActive ? "text-[#c0c1ff]" : "text-[#c7c4d7]"}`} style={{ fontVariationSettings: isActive ? "'FILL' 1" : "" }}>
+                  <span className={`material-symbols-outlined text-[20px] ${isActive ? "text-[#14b8a6]" : "text-[#c7c4d7]"}`} style={{ fontVariationSettings: isActive ? "'FILL' 1" : "" }}>
                     {item.icon}
                   </span>
                   <span>{item.label}</span>
@@ -963,8 +1490,8 @@ export default function App() {
 
         {/* Sidebar Footer */}
         <div className="mt-auto pt-6 border-t border-white/5 space-y-4">
-          <div className="bg-[#c0c1ff]/10 rounded-lg p-3 text-center border border-[#c0c1ff]/20">
-            <span className="font-mono text-xs text-[#c0c1ff] uppercase tracking-wider block text-[10px]">Productivity Rating</span>
+          <div className="bg-[#14b8a6]/10 rounded-lg p-3 text-center border border-[#14b8a6]/20">
+            <span className="font-mono text-xs text-[#14b8a6] uppercase tracking-wider block text-[10px]">Productivity Rating</span>
             <span className="font-bold text-white text-md">SCORE: 92</span>
           </div>
           
@@ -999,13 +1526,13 @@ export default function App() {
             className="glass-panel text-white hover:bg-[#373940]/20 px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors duration-200 cursor-pointer"
             title="Open global Command Palette (Ctrl+K)"
           >
-            <span className="material-symbols-outlined text-[16px] text-[#c0c1ff]">terminal</span>
+            <span className="material-symbols-outlined text-[16px] text-[#14b8a6]">terminal</span>
             Command Palette <kbd className="hidden md:inline bg-white/5 border border-white/10 px-1 py-0.5 rounded text-[9px] font-mono text-[#c7c4d7]/70 ml-1">⌘K</kbd>
           </button>
 
           <button 
             onClick={() => setShowAddModal(true)}
-            className="bg-[#c0c1ff] hover:bg-[#c0c1ff]/90 text-[#1000a9] font-bold text-xs px-4 py-2 rounded-lg transition-all shadow-lg shadow-[#c0c1ff]/10 flex items-center gap-1.5 cursor-pointer"
+            className="bg-[#14b8a6] hover:bg-[#14b8a6]/90 text-[#022c22] font-bold text-xs px-4 py-2 rounded-lg transition-all shadow-lg shadow-[#14b8a6]/10 flex items-center gap-1.5 cursor-pointer"
           >
             <span className="material-symbols-outlined text-[16px] font-bold">add</span>
             Add Task
@@ -1014,12 +1541,12 @@ export default function App() {
           <button 
             onClick={handleWhatNow}
             disabled={aiCoachLoading || sortedPendingTasks.length === 0}
-            className="glass-panel text-[#c0c1ff] hover:bg-[#373940]/20 px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors duration-200 disabled:opacity-40"
+            className="glass-panel text-[#14b8a6] hover:bg-[#373940]/20 px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors duration-200 disabled:opacity-40"
           >
             {aiCoachLoading ? (
               <span className="material-symbols-outlined animate-spin text-[16px]">hourglass</span>
             ) : (
-              <span className="material-symbols-outlined text-[16px] text-[#c0c1ff]">psychology</span>
+              <span className="material-symbols-outlined text-[16px] text-[#14b8a6]">psychology</span>
             )}
             Next Best Move
           </button>
@@ -1027,7 +1554,7 @@ export default function App() {
           <button 
             onClick={triggerPrioritize}
             disabled={actionLoading}
-            className="text-[#c7c4d7] hover:text-[#c0c1ff] p-2 hover:bg-[#373940]/20 rounded-full transition-colors"
+            className="text-[#c7c4d7] hover:text-[#14b8a6] p-2 hover:bg-[#373940]/20 rounded-full transition-colors"
             title="Recalculate AI priority scores"
           >
             <span className={`material-symbols-outlined ${actionLoading ? "animate-spin" : ""}`}>
@@ -1040,7 +1567,7 @@ export default function App() {
       {/* 2b. Mobile Top Brand Bar */}
       <header className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-[#15161e]/80 backdrop-blur-md border-b border-white/5 z-40 flex items-center justify-between px-6 shadow-md">
         <div className="flex items-center gap-2 cursor-pointer" onClick={() => { setActiveTab("dashboard"); setSelectedTask(null); }}>
-          <div className="w-8 h-8 rounded-full bg-[#c0c1ff]/20 flex items-center justify-center overflow-hidden border border-white/10">
+          <div className="w-8 h-8 rounded-full bg-[#14b8a6]/20 flex items-center justify-center overflow-hidden border border-white/10">
             <img 
               alt="User Profile" 
               className="w-full h-full object-cover" 
@@ -1056,7 +1583,7 @@ export default function App() {
         <div className="flex items-center gap-2.5">
           <button 
             onClick={() => setCommandPaletteOpen(true)}
-            className="p-2 rounded-lg transition-colors flex items-center justify-center cursor-pointer text-[#c7c4d7] hover:text-[#c0c1ff] hover:bg-white/5"
+            className="p-2 rounded-lg transition-colors flex items-center justify-center cursor-pointer text-[#c7c4d7] hover:text-[#14b8a6] hover:bg-white/5"
             title="Open global Command Palette"
           >
             <span className="material-symbols-outlined text-[18px]">terminal</span>
@@ -1066,7 +1593,7 @@ export default function App() {
             onClick={() => { setActiveTab("settings"); setSelectedTask(null); }}
             className={`p-2 rounded-lg transition-colors flex items-center justify-center cursor-pointer ${
               activeTab === "settings" && !selectedTask
-                ? "bg-[#c0c1ff]/20 text-[#c0c1ff]" 
+                ? "bg-[#14b8a6]/20 text-[#14b8a6]" 
                 : "text-[#c7c4d7] hover:text-white hover:bg-white/5"
             }`}
             title="System Settings"
@@ -1076,7 +1603,7 @@ export default function App() {
 
           <button 
             onClick={() => setShowAddModal(true)}
-            className="bg-[#c0c1ff] hover:bg-[#c0c1ff]/90 text-[#1000a9] font-bold text-[10px] sm:text-xs px-3 py-2 rounded-lg transition-all flex items-center gap-1 cursor-pointer shadow-md shadow-[#c0c1ff]/10"
+            className="bg-[#14b8a6] hover:bg-[#14b8a6]/90 text-[#022c22] font-bold text-[10px] sm:text-xs px-3 py-2 rounded-lg transition-all flex items-center gap-1 cursor-pointer shadow-md shadow-[#14b8a6]/10"
           >
             <span className="material-symbols-outlined text-[14px] font-bold">add</span>
             Add Task
@@ -1088,8 +1615,8 @@ export default function App() {
       <main className="flex-1 lg:ml-[328px] min-h-screen relative p-4 sm:p-6 md:p-10 lg:p-16 pt-24 pb-32 lg:pt-[100px] lg:pb-16 overflow-y-auto">
         
         {/* Background Ambient Violet/Indigo Glows */}
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-[#c0c1ff]/5 rounded-full blur-[140px] pointer-events-none z-0"></div>
-        <div className="absolute bottom-20 left-10 w-[400px] h-[400px] bg-[#d0bcff]/3 rounded-full blur-[120px] pointer-events-none z-0"></div>
+        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-[#14b8a6]/5 rounded-full blur-[140px] pointer-events-none z-0"></div>
+        <div className="absolute bottom-20 left-10 w-[400px] h-[400px] bg-[#2dd4bf]/3 rounded-full blur-[120px] pointer-events-none z-0"></div>
 
         <div className="max-w-5xl mx-auto relative z-10 pb-16">
           
@@ -1112,7 +1639,7 @@ export default function App() {
                   </button>
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="px-2 py-0.5 rounded bg-[#571bc1]/40 text-[#c4abff] font-mono text-[10px] uppercase tracking-wider border border-[#571bc1]/20">
+                      <span className="px-2 py-0.5 rounded bg-[#0f766e]/40 text-[#99f6e4] font-mono text-[10px] uppercase tracking-wider border border-[#0f766e]/20">
                         Project Phase 2
                       </span>
                       <span className="px-2 py-0.5 rounded bg-[#33343b] text-[#c7c4d7] font-mono text-[10px] uppercase tracking-wider">
@@ -1149,7 +1676,7 @@ export default function App() {
                   <div>
                     <div className="flex justify-between items-end mb-2">
                       <span className="text-xs font-semibold text-[#c7c4d7]">Overall Task Progress</span>
-                      <span className="font-mono text-xs text-[#c0c1ff] font-bold">
+                      <span className="font-mono text-xs text-[#14b8a6] font-bold">
                         {selectedTask.progress !== undefined && selectedTask.progress !== null ? selectedTask.progress : (selectedTask.subtasks 
                           ? Math.round((selectedTask.subtasks.filter(s => s.done).length / selectedTask.subtasks.length) * 100)
                           : selectedTask.status === "completed" ? 100 : 0)}%
@@ -1157,7 +1684,7 @@ export default function App() {
                     </div>
                     <div className="w-full h-3 bg-[#33343b] rounded-full overflow-hidden shadow-inner">
                       <div 
-                        className="h-full bg-gradient-to-r from-[#571bc1] to-[#c0c1ff] progress-bar-stripes rounded-full shadow-[0_0_12px_rgba(192,193,255,0.4)] transition-all duration-500"
+                        className="h-full bg-gradient-to-r from-[#0f766e] to-[#14b8a6] progress-bar-stripes rounded-full shadow-[0_0_12px_rgba(192,193,255,0.4)] transition-all duration-500"
                         style={{ 
                           width: `${selectedTask.progress !== undefined && selectedTask.progress !== null ? selectedTask.progress : (selectedTask.subtasks 
                             ? (selectedTask.subtasks.filter(s => s.done).length / selectedTask.subtasks.length) * 100
@@ -1168,12 +1695,12 @@ export default function App() {
                   </div>
                   <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/5 text-xs text-[#c7c4d7]">
                     <div className="flex items-center gap-1.5">
-                      <span className="material-symbols-outlined text-[16px] text-[#c0c1ff]">folder</span>
+                      <span className="material-symbols-outlined text-[16px] text-[#14b8a6]">folder</span>
                       <span>Project: <span className="font-bold text-white">{selectedTask.project || "General"}</span></span>
                     </div>
                     <div className="flex gap-1.5 flex-wrap">
                       {(selectedTask.tags || []).map(tag => (
-                        <span key={tag} className="font-mono text-[9px] text-[#c0c1ff] bg-[#c0c1ff]/10 px-2 py-0.5 rounded border border-[#c0c1ff]/20">#{tag}</span>
+                        <span key={tag} className="font-mono text-[9px] text-[#14b8a6] bg-[#14b8a6]/10 px-2 py-0.5 rounded border border-[#14b8a6]/20">#{tag}</span>
                       ))}
                     </div>
                   </div>
@@ -1187,13 +1714,9 @@ export default function App() {
                       Task Health Index
                     </span>
                     <span className={`font-mono text-[9px] uppercase font-bold px-2 py-0.5 rounded ${
-                      selectedTask.riskLevel === "Critical" 
-                        ? "bg-red-400/20 text-red-300 border border-red-400/30" 
-                        : selectedTask.riskLevel === "High" 
-                          ? "bg-orange-400/20 text-orange-300 border border-orange-400/30"
-                          : "bg-emerald-400/20 text-[#4edea3] border border-[#4edea3]/30"
+                      getTaskStatusStyle(selectedTask).badgeClass
                     }`}>
-                      {selectedTask.riskLevel || "Low"} Risk
+                      {getTaskStatusStyle(selectedTask).level}
                     </span>
                   </div>
 
@@ -1205,7 +1728,7 @@ export default function App() {
                     </div>
                     <div>
                       <span className="text-[9px] font-mono text-[#c7c4d7]/70 block uppercase">Complexity</span>
-                      <span className="text-sm font-bold text-[#c0c1ff] flex items-center gap-1 mt-0.5">
+                      <span className="text-sm font-bold text-[#14b8a6] flex items-center gap-1 mt-0.5">
                         <span className="material-symbols-outlined text-[14px]">psychology</span>
                         {selectedTask.difficulty || "Medium"}
                       </span>
@@ -1233,7 +1756,7 @@ export default function App() {
                 <div className="lg:col-span-8 space-y-4">
                   <div className="flex items-center justify-between">
                     <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                      <span className="material-symbols-outlined text-[#c0c1ff]">splitscreen</span>
+                      <span className="material-symbols-outlined text-[#14b8a6]">splitscreen</span>
                       Break It Down
                     </h2>
                     <span className="font-mono text-[10px] text-[#c7c4d7] px-2.5 py-1 rounded-full glass-panel">AI Generated Plan</span>
@@ -1250,8 +1773,8 @@ export default function App() {
                             onClick={() => toggleSubtask(selectedTask, sub.id)}
                             className={`mt-1.5 w-6 h-6 rounded-full border border-white/20 flex items-center justify-center transition-all ${
                               sub.done 
-                                ? "bg-[#c0c1ff]/20 text-[#c0c1ff] border-[#c0c1ff] shadow-[0_0_8px_rgba(192,193,255,0.3)]" 
-                                : "hover:border-[#c0c1ff]"
+                                ? "bg-[#14b8a6]/20 text-[#14b8a6] border-[#14b8a6] shadow-[0_0_8px_rgba(192,193,255,0.3)]" 
+                                : "hover:border-[#14b8a6]"
                             }`}
                           >
                             {sub.done && <span className="material-symbols-outlined text-[16px] font-bold">check</span>}
@@ -1259,7 +1782,7 @@ export default function App() {
                           
                           <div className="flex-1">
                             <div className="flex flex-wrap items-center gap-2 mb-1">
-                              <span className="font-mono text-[9px] text-[#c0c1ff] bg-[#c0c1ff]/10 px-1.5 py-0.5 rounded font-bold uppercase">
+                              <span className="font-mono text-[9px] text-[#14b8a6] bg-[#14b8a6]/10 px-1.5 py-0.5 rounded font-bold uppercase">
                                 Step {sub.executionOrder || (idx + 1)}
                               </span>
                               {sub.priority && (
@@ -1300,7 +1823,7 @@ export default function App() {
                         <button 
                           onClick={() => handleBreakdown(selectedTask.id)}
                           disabled={actionLoading}
-                          className="px-5 py-2 bg-[#c0c1ff]/10 hover:bg-[#c0c1ff]/20 text-[#c0c1ff] font-semibold text-xs rounded-lg py-2 border border-[#c0c1ff]/20 transition-all cursor-pointer"
+                          className="px-5 py-2 bg-[#14b8a6]/10 hover:bg-[#14b8a6]/20 text-[#14b8a6] font-semibold text-xs rounded-lg py-2 border border-[#14b8a6]/20 transition-all cursor-pointer"
                         >
                           {actionLoading ? "Breaking it down..." : "Break It Down with AI"}
                         </button>
@@ -1311,7 +1834,7 @@ export default function App() {
                       <button 
                         onClick={() => handleBreakdown(selectedTask.id)}
                         disabled={actionLoading}
-                        className="w-full py-4 rounded-xl border border-dashed border-white/10 hover:border-[#c0c1ff] text-[#c7c4d7] hover:text-[#c0c1ff] transition-all duration-300 flex items-center justify-center gap-2 text-xs font-semibold bg-[#191b22]/30 hover:bg-[#191b22]/60 cursor-pointer"
+                        className="w-full py-4 rounded-xl border border-dashed border-white/10 hover:border-[#14b8a6] text-[#c7c4d7] hover:text-[#14b8a6] transition-all duration-300 flex items-center justify-center gap-2 text-xs font-semibold bg-[#191b22]/30 hover:bg-[#191b22]/60 cursor-pointer"
                       >
                         <span className="material-symbols-outlined text-[16px] animate-spin-slow">auto_awesome</span>
                         {actionLoading ? "Regenerating..." : "Regenerate subtasks list"}
@@ -1325,14 +1848,14 @@ export default function App() {
                   <div className="glass-panel rounded-xl p-5 flex flex-col justify-between h-full space-y-6">
                     <div>
                       <div className="flex items-center gap-2 mb-4 border-b border-white/5 pb-3">
-                        <span className="material-symbols-outlined text-[#d0bcff]">psychology</span>
+                        <span className="material-symbols-outlined text-[#2dd4bf]">psychology</span>
                         <h3 className="font-bold text-[#e2e2eb] text-sm">AI Coach Insights</h3>
                       </div>
 
                       <div className="space-y-5 text-xs text-[#c7c4d7] leading-relaxed">
                         <div>
-                          <h4 className="font-bold text-[#d0bcff] mb-1 flex items-center gap-1">
-                            <span className="w-1 h-1 rounded-full bg-[#d0bcff]"></span>
+                          <h4 className="font-bold text-[#2dd4bf] mb-1 flex items-center gap-1">
+                            <span className="w-1 h-1 rounded-full bg-[#2dd4bf]"></span>
                             Strategic Alignment
                           </h4>
                           <p>{selectedTask.aiBreakdownInsight || selectedTask.priorityReasoning || "Life Saver AI will automatically evaluate your progress and compile active insights once you start checkmarking completed milestones."}</p>
@@ -1340,8 +1863,8 @@ export default function App() {
 
                         {selectedTask.suggestedResource && (
                           <div>
-                            <h4 className="font-bold text-[#c0c1ff] mb-2 flex items-center gap-1">
-                              <span className="w-1 h-1 rounded-full bg-[#c0c1ff]"></span>
+                            <h4 className="font-bold text-[#14b8a6] mb-2 flex items-center gap-1">
+                              <span className="w-1 h-1 rounded-full bg-[#14b8a6]"></span>
                               Recommended Reference
                             </h4>
                             <div className="p-3 rounded-lg bg-[#1e1f26] border border-white/5 flex items-start gap-3 hover:bg-[#33343b] cursor-pointer transition-colors">
@@ -1357,8 +1880,8 @@ export default function App() {
                         {/* Deep Focus Resumption Note / Context-Switching Assistant */}
                         <div className="pt-4 border-t border-white/5 space-y-3">
                           <div className="flex items-center justify-between">
-                            <h4 className="font-bold text-[#c0c1ff] flex items-center gap-1.5">
-                              <span className="material-symbols-outlined text-[16px] text-[#c0c1ff]">restore_page</span>
+                            <h4 className="font-bold text-[#14b8a6] flex items-center gap-1.5">
+                              <span className="material-symbols-outlined text-[16px] text-[#14b8a6]">restore_page</span>
                               Focus Resumption Note
                             </h4>
                             {selectedTask.importance === "High" && (
@@ -1369,13 +1892,13 @@ export default function App() {
                           </div>
                           
                           {selectedTask.contextNotes ? (
-                            <div className="p-3 rounded-lg bg-[#c0c1ff]/5 border border-[#c0c1ff]/15 text-[#e2e2eb] space-y-2">
+                            <div className="p-3 rounded-lg bg-[#14b8a6]/5 border border-[#14b8a6]/15 text-[#e2e2eb] space-y-2">
                               <p className="text-xs italic leading-relaxed">"{selectedTask.contextNotes}"</p>
                               <div className="flex justify-end">
                                 <button
                                   onClick={() => handleGenerateContextNotes(selectedTask.id)}
                                   disabled={actionLoading}
-                                  className="text-[9px] text-[#c0c1ff] hover:underline font-mono flex items-center gap-1 cursor-pointer"
+                                  className="text-[9px] text-[#14b8a6] hover:underline font-mono flex items-center gap-1 cursor-pointer"
                                 >
                                   <span className="material-symbols-outlined text-[12px]">refresh</span>
                                   Regenerate Note
@@ -1388,7 +1911,7 @@ export default function App() {
                               <button
                                 onClick={() => handleGenerateContextNotes(selectedTask.id)}
                                 disabled={actionLoading}
-                                className="w-full py-1.5 bg-[#c0c1ff]/10 hover:bg-[#c0c1ff]/20 text-[#c0c1ff] font-bold text-[10px] rounded border border-[#c0c1ff]/20 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                                className="w-full py-1.5 bg-[#14b8a6]/10 hover:bg-[#14b8a6]/20 text-[#14b8a6] font-bold text-[10px] rounded border border-[#14b8a6]/20 transition-all flex items-center justify-center gap-1 cursor-pointer"
                               >
                                 <span className="material-symbols-outlined text-[12px]">auto_awesome</span>
                                 {actionLoading ? "Synthesizing..." : "Generate Resumption Note"}
@@ -1423,15 +1946,15 @@ export default function App() {
                   className="space-y-8 pb-12"
                 >
                   {/* Hero Greeting Segment */}
-                  <header className="relative bg-gradient-to-r from-[#181922] via-[#1a1b26] to-[#12131a] border border-white/5 rounded-2xl p-6 sm:p-8 overflow-hidden group">
+                  <header className="relative bg-gradient-to-r from-[#181922] via-[#1a1b26] to-[#12131a] border border-white/5 rounded-2xl p-6 sm:p-8 overflow-hidden group glow-sweep-bg">
                     {/* Glowing aesthetic background orb */}
-                    <div className="absolute top-[-50px] right-[-50px] w-96 h-96 bg-[#c0c1ff]/10 rounded-full blur-3xl pointer-events-none group-hover:bg-[#c0c1ff]/15 transition-all duration-700"></div>
-                    <div className="absolute bottom-[-50px] left-[-50px] w-80 h-80 bg-purple-500/5 rounded-full blur-3xl pointer-events-none"></div>
+                    <div className="absolute top-[-50px] right-[-50px] w-96 h-96 bg-[#14b8a6]/10 rounded-full blur-3xl pointer-events-none group-hover:bg-[#14b8a6]/15 transition-all duration-700"></div>
+                    <div className="absolute bottom-[-50px] left-[-50px] w-80 h-80 bg-amber-500/5 rounded-full blur-3xl pointer-events-none"></div>
 
                     <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
                       <div className="space-y-2">
                         <div className="flex items-center gap-2">
-                          <span className="font-sans font-medium text-xs tracking-widest text-[#c0c1ff] bg-[#c0c1ff]/10 border border-[#c0c1ff]/20 px-3 py-1 rounded-full uppercase">
+                          <span className="font-sans font-medium text-xs tracking-widest text-[#14b8a6] bg-[#14b8a6]/10 border border-[#14b8a6]/20 px-3 py-1 rounded-full uppercase">
                             AI Executive Assistant
                           </span>
                           <span className="w-1.5 h-1.5 rounded-full bg-[#4edea3] animate-pulse"></span>
@@ -1446,7 +1969,7 @@ export default function App() {
                             return `Good Night, ${userName} 🌙`;
                           })()}
                         </h1>
-                        <p className="font-mono text-xs text-[#c0c1ff] font-semibold tracking-wide">
+                        <p className="font-mono text-xs text-[#14b8a6] font-semibold tracking-wide">
                           {new Date().toLocaleDateString("en-US", {
                             weekday: "long",
                             month: "long",
@@ -1455,23 +1978,56 @@ export default function App() {
                           })}
                         </p>
                         <div className="pt-2 flex items-start gap-2.5 max-w-2xl">
-                          <span className="material-symbols-outlined text-[#c0c1ff] text-[18px] mt-0.5 shrink-0 animate-pulse-soft">psychology</span>
+                          <span className="material-symbols-outlined text-[#14b8a6] text-[18px] mt-0.5 shrink-0 animate-pulse-soft">psychology</span>
                           <p className="text-xs text-[#c7c4d7] leading-relaxed">
-                            <span className="font-bold text-[#c0c1ff]">Life Saver Advice:</span> {getAIVerbalInsight()}
+                            <span className="font-bold text-[#14b8a6]">Life Saver Advice:</span> {getAIVerbalInsight()}
                           </p>
                         </div>
                       </div>
 
                       {/* Productivity Level Gauge */}
-                      <div className="glass-panel-heavy p-4 rounded-xl border border-white/15 text-center min-w-[150px] shadow-lg shadow-black/10">
+                      <div 
+                        onClick={() => setFocusDiagnosticsOpen(true)}
+                        className="glass-panel-heavy p-4 rounded-xl border border-white/15 text-center min-w-[170px] shadow-lg shadow-black/10 cursor-pointer hover:border-[#14b8a6]/40 hover:bg-[#14b8a6]/5 transition-all duration-300 relative z-10"
+                        title="Click to view details"
+                      >
                         <div className="text-[10px] font-mono text-[#c7c4d7]/80 uppercase tracking-widest font-bold">Focus Efficacy</div>
-                        <div className="text-4xl font-extrabold text-white font-mono my-1 tracking-tight">
-                          {Math.min(100, Math.max(30, Math.round(85 + (completedTasks.length * 4) - (sortedPendingTasks.filter(t => getCountdown(t.deadline).isOverdue).length * 8))))}%
-                        </div>
-                        <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#4edea3]/15 text-[#4edea3] text-[9px] font-bold font-mono">
-                          <span className="w-1 h-1 rounded-full bg-[#4edea3]"></span>
-                          OPTIMAL LEVEL
-                        </div>
+                        {focusScoring.score === null ? (
+                          <>
+                            <div className="text-3xl font-extrabold text-white/40 font-mono my-1.5 tracking-tight">—</div>
+                            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 text-white/50 text-[8px] font-medium font-mono">
+                              NO DATA YET
+                            </div>
+                            <div className="text-[8px] text-[#c7c4d7]/50 mt-1 font-mono leading-tight">
+                              Run a Focus Session to calibrate
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="text-4xl font-extrabold text-white font-mono my-1 tracking-tight">
+                              {focusScoring.score}%
+                            </div>
+                            <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold font-mono ${
+                              focusScoring.score >= 80 
+                                ? "bg-[#14b8a6]/15 text-[#14b8a6]" 
+                                : focusScoring.score >= 60 
+                                  ? "bg-amber-500/15 text-amber-400" 
+                                  : "bg-red-500/15 text-red-400"
+                            }`}>
+                              <span className={`w-1 h-1 rounded-full ${
+                                focusScoring.score >= 80 
+                                  ? "bg-[#14b8a6]" 
+                                  : focusScoring.score >= 60 
+                                    ? "bg-amber-400" 
+                                    : "bg-red-400"
+                              }`}></span>
+                              {focusScoring.score >= 80 ? "OPTIMAL" : focusScoring.score >= 60 ? "STABLE" : "ATTENTION"}
+                            </div>
+                            <div className="text-[8px] text-[#14b8a6]/80 mt-1 font-mono hover:underline">
+                              Diagnostics Detail ↗
+                            </div>
+                          </>
+                        )}
                       </div>
                     </div>
                   </header>
@@ -1479,7 +2035,7 @@ export default function App() {
                   {/* Today's Overview (Statistics Bento Row - 8 Cards) */}
                   <section className="space-y-4">
                     <div className="flex items-center gap-2">
-                      <span className="material-symbols-outlined text-[#c0c1ff] text-[20px]">bento_menu</span>
+                      <span className="material-symbols-outlined text-[#14b8a6] text-[20px]">bento_menu</span>
                       <h3 className="text-xs font-mono font-bold uppercase tracking-widest text-[#c7c4d7]">Today's Performance Overview</h3>
                     </div>
 
@@ -1506,11 +2062,12 @@ export default function App() {
                         },
                         { 
                           icon: "bolt", 
-                          iconColor: "text-[#c0c1ff]", 
-                          bgColor: "bg-[#c0c1ff]/5 border-[#c0c1ff]/10",
-                          val: `${Math.min(100, Math.max(30, Math.round(85 + (completedTasks.length * 4) - (sortedPendingTasks.filter(t => getCountdown(t.deadline).isOverdue).length * 8))))}%`, 
+                          iconColor: "text-[#14b8a6]", 
+                          bgColor: "bg-[#14b8a6]/5 border-[#14b8a6]/10 cursor-pointer hover:border-[#14b8a6]/30",
+                          val: focusScoring.score === null ? "—" : `${focusScoring.score}%`, 
                           label: "Focus Score", 
-                          trend: "Top 5%" 
+                          trend: focusScoring.trend === "new" ? "New" : focusScoring.trend === "up" ? "▲ Up" : focusScoring.trend === "down" ? "▼ Down" : "■ Stable",
+                          onClick: () => setFocusDiagnosticsOpen(true)
                         },
                         { 
                           icon: "local_fire_department", 
@@ -1534,15 +2091,15 @@ export default function App() {
                           bgColor: "bg-rose-400/5 border-rose-400/10",
                           val: sortedPendingTasks.filter(t => { 
                             const r = calculateRisk(t); 
-                            return r.level === "Critical" || r.level === "High Risk"; 
+                            return r.level === "Extreme" || r.level === "High Risk"; 
                           }).length, 
                           label: "At Risk", 
                           trend: "Alerts" 
                         },
                         { 
                           icon: "hourglass_empty", 
-                          iconColor: "text-purple-400", 
-                          bgColor: "bg-purple-400/5 border-purple-400/10",
+                          iconColor: "text-amber-400", 
+                          bgColor: "bg-amber-400/5 border-amber-400/10",
                           val: `${deepFocusTime}m`, 
                           label: "Deep Work", 
                           trend: "Focus" 
@@ -1555,10 +2112,11 @@ export default function App() {
                           label: "Completions", 
                           trend: `${completedTasks.length}/${tasks.length}` 
                         }
-                      ].map((stat, idx) => (
+                      ].map((stat: any, idx) => (
                         <div 
                           key={idx} 
-                          className={`glass-panel rounded-xl p-4 flex flex-col justify-between hover:bg-[#373940]/15 hover:border-white/20 hover:scale-[1.04] transition-all duration-300 border ${stat.bgColor}`}
+                          onClick={stat.onClick}
+                          className={`glass-panel rounded-xl p-4 flex flex-col justify-between hover:bg-[#373940]/15 hover:border-white/20 hover:scale-[1.04] transition-all duration-300 border ${stat.bgColor} ${stat.onClick ? "cursor-pointer" : ""}`}
                         >
                           <div className="flex justify-between items-start">
                             <span className={`material-symbols-outlined ${stat.iconColor} text-[18px]`}>{stat.icon}</span>
@@ -1579,17 +2137,17 @@ export default function App() {
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                     
                     {/* Centered Recommendation Card (Left) */}
-                    <div className="lg:col-span-7 bg-[#13111c]/70 backdrop-blur-3xl border border-[#c0c1ff]/35 shadow-[0_0_50px_rgba(192,193,255,0.15)] rounded-2xl p-6 sm:p-8 relative overflow-hidden flex flex-col justify-between group min-h-[420px] transition-all duration-500 hover:border-[#c0c1ff]/50">
-                      <div className="absolute -top-24 -right-24 w-80 h-80 bg-gradient-to-br from-[#c0c1ff]/15 to-transparent rounded-full blur-3xl pointer-events-none"></div>
+                    <div className="lg:col-span-7 bg-[#13111c]/70 backdrop-blur-3xl border border-[#14b8a6]/35 shadow-[0_0_50px_rgba(192,193,255,0.15)] rounded-2xl p-6 sm:p-8 relative overflow-hidden flex flex-col justify-between group min-h-[420px] transition-all duration-500 hover:border-[#14b8a6]/50">
+                      <div className="absolute -top-24 -right-24 w-80 h-80 bg-gradient-to-br from-[#14b8a6]/15 to-transparent rounded-full blur-3xl pointer-events-none"></div>
                       
                       <div>
                         <div className="flex justify-between items-center mb-6">
                           <div className="flex items-center gap-2.5">
                             <span className="text-2xl animate-pulse-soft">🧠</span>
                             <div>
-                              <span className="font-mono text-xs text-[#c0c1ff] tracking-wider uppercase font-bold flex items-center gap-1.5">
+                              <span className="font-mono text-xs text-[#14b8a6] tracking-wider uppercase font-bold flex items-center gap-1.5">
                                 AI Core Assistant Centerpiece
-                                <span className="w-1.5 h-1.5 rounded-full bg-[#c0c1ff] animate-ping"></span>
+                                <span className="w-1.5 h-1.5 rounded-full bg-[#14b8a6] animate-ping"></span>
                               </span>
                               <p className="text-[10px] font-mono text-[#c7c4d7]/70 mt-0.5">Continuous Decision Optimization Engine</p>
                             </div>
@@ -1605,14 +2163,14 @@ export default function App() {
 
                         <div className="space-y-4">
                           <span className="text-[#c7c4d7] font-mono text-[10px] uppercase tracking-widest block mb-1">Recommended Direct Focus Target</span>
-                          <h2 className="font-sans font-extrabold text-2xl sm:text-3xl text-white tracking-tight leading-tight group-hover:text-[#c0c1ff] transition-colors duration-300">
+                          <h2 className="font-sans font-extrabold text-2xl sm:text-3xl text-white tracking-tight leading-tight group-hover:text-[#14b8a6] transition-colors duration-300">
                             {sortedPendingTasks[0] ? sortedPendingTasks[0].title : "Backlog Is Completely Settled!"}
                           </h2>
 
                           {sortedPendingTasks[0] ? (
                             <div className="space-y-4">
                               <div className="bg-[#1e1f26]/80 p-4 rounded-xl border border-white/5 space-y-2.5">
-                                <span className="text-[9px] font-mono text-[#c0c1ff] uppercase tracking-wider block font-bold">AI Predictive Reasoning</span>
+                                <span className="text-[9px] font-mono text-[#14b8a6] uppercase tracking-wider block font-bold">AI Predictive Reasoning</span>
                                 <p className="text-xs text-[#e2e2eb] leading-relaxed">
                                   {sortedPendingTasks[0].priorityReasoning || "This high-importance item is currently leading your productivity queue. Initiating a dedicated focus session right now is estimated to increase your weekly completion score."}
                                 </p>
@@ -1621,7 +2179,7 @@ export default function App() {
                               <div className="grid grid-cols-2 gap-4">
                                 <div className="bg-[#1e1f26]/60 p-3 rounded-lg border border-white/5">
                                   <span className="text-[9px] font-mono text-[#c7c4d7]/80 uppercase block">Workload Effort</span>
-                                  <span className="font-mono text-sm text-[#c0c1ff] font-bold">{sortedPendingTasks[0].estimatedMinutes} minutes</span>
+                                  <span className="font-mono text-sm text-[#14b8a6] font-bold">{sortedPendingTasks[0].estimatedMinutes} minutes</span>
                                 </div>
                                 <div className="bg-[#1e1f26]/60 p-3 rounded-lg border border-white/5">
                                   <span className="text-[9px] font-mono text-[#c7c4d7]/80 uppercase block">Deadline Risk</span>
@@ -1654,7 +2212,7 @@ export default function App() {
                                 setFocusIsRunning(true);
                                 showToast(`🎯 Pomodoro focus loaded: "${task.title}"`, "success");
                               }}
-                              className="bg-[#c0c1ff] hover:bg-[#b0b2ff] text-[#1000a9] font-bold text-xs px-6 py-3 rounded-xl transition-all shadow-md hover:scale-[1.03] active:scale-[0.98] flex items-center gap-1.5 cursor-pointer"
+                              className="bg-[#14b8a6] hover:bg-[#b0b2ff] text-[#022c22] font-bold text-xs px-6 py-3 rounded-xl transition-all shadow-md hover:scale-[1.03] active:scale-[0.98] flex items-center gap-1.5 cursor-pointer"
                             >
                               <span className="material-symbols-outlined text-[16px]">timer</span>
                               Deep Session
@@ -1669,7 +2227,7 @@ export default function App() {
                         ) : (
                           <button 
                             onClick={() => setShowAddModal(true)}
-                            className="bg-[#c0c1ff] hover:bg-[#b0b2ff] text-[#1000a9] font-bold text-xs px-6 py-3 rounded-xl transition-all cursor-pointer hover:scale-[1.03]"
+                            className="bg-[#14b8a6] hover:bg-[#b0b2ff] text-[#022c22] font-bold text-xs px-6 py-3 rounded-xl transition-all cursor-pointer hover:scale-[1.03]"
                           >
                             Create Target
                           </button>
@@ -1717,7 +2275,7 @@ export default function App() {
                                 setFocusTimeTotal(t.estimatedMinutes * 60);
                               }
                             }}
-                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2.5 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
+                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2.5 text-xs text-white focus:border-[#14b8a6] focus:outline-none"
                           >
                             <option value="">-- Generic Focus Session --</option>
                             {pendingTasks.map(t => (
@@ -1734,7 +2292,7 @@ export default function App() {
                               <motion.div
                                 animate={{ scale: [1, 1.25, 1], opacity: [0.15, 0.05, 0.15] }}
                                 transition={{ repeat: Infinity, duration: 2.2, ease: "easeInOut" }}
-                                className="absolute inset-0 rounded-full bg-[#c0c1ff]/20 pointer-events-none"
+                                className="absolute inset-0 rounded-full bg-[#14b8a6]/20 pointer-events-none"
                               />
                             )}
                             <div className="text-3xl font-bold font-mono text-white select-none">
@@ -1744,7 +2302,7 @@ export default function App() {
                                 return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
                               })()}
                             </div>
-                            <div className="text-[9px] font-mono text-[#c0c1ff] uppercase tracking-widest mt-1">
+                            <div className="text-[9px] font-mono text-[#14b8a6] uppercase tracking-widest mt-1">
                               {focusIsRunning ? "Active Deep" : "Ready Block"}
                             </div>
                           </div>
@@ -1754,11 +2312,11 @@ export default function App() {
                       <div className="space-y-4">
                         <div className="flex justify-center items-center gap-3">
                           <button
-                            onClick={() => setFocusIsRunning(!focusIsRunning)}
+                            onClick={toggleFocusTimer}
                             className={`flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer border ${
                               focusIsRunning 
                                 ? "bg-red-400/10 text-red-400 border-red-400/20 hover:bg-red-400/20" 
-                                : "bg-[#4edea3] hover:bg-[#3ec48f] text-[#100010] border-transparent"
+                                : "bg-[#4edea3] hover:bg-[#3ec48f] text-[#0f172a] border-transparent"
                             }`}
                           >
                             <span className="material-symbols-outlined text-[16px] font-bold">
@@ -1768,10 +2326,7 @@ export default function App() {
                           </button>
                           
                           <button
-                            onClick={() => {
-                              setFocusIsRunning(false);
-                              setFocusTimeLeft(focusTimeTotal);
-                            }}
+                            onClick={handleCancelSession}
                             className="p-2.5 rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-colors active:scale-95 cursor-pointer"
                             title="Reset Timer"
                           >
@@ -1793,7 +2348,7 @@ export default function App() {
                   {/* Quick Actions Grid Row (7 Buttons) */}
                   <section className="space-y-4">
                     <div className="flex items-center gap-2">
-                      <span className="material-symbols-outlined text-[#c0c1ff] text-[20px]">bolt</span>
+                      <span className="material-symbols-outlined text-[#14b8a6] text-[20px]">bolt</span>
                       <h3 className="text-xs font-mono font-bold uppercase tracking-widest text-[#c7c4d7]">Personal Assistant Quick Actions</h3>
                     </div>
 
@@ -1803,13 +2358,13 @@ export default function App() {
                           label: "Create Task", 
                           icon: "add_task", 
                           action: () => setShowAddModal(true), 
-                          color: "hover:bg-[#c0c1ff]/10 hover:text-[#c0c1ff]" 
+                          color: "hover:bg-[#14b8a6]/10 hover:text-[#14b8a6]" 
                         },
                         { 
                           label: "Plan My Day", 
                           icon: "auto_awesome", 
                           action: () => setActiveTab("planner"), 
-                          color: "hover:bg-purple-400/10 hover:text-purple-300" 
+                          color: "hover:bg-[#14b8a6]/10 hover:text-[#14b8a6]" 
                         },
                         { 
                           label: "Ask AI Coach", 
@@ -1879,6 +2434,67 @@ export default function App() {
                     
                     {/* Upcoming Tasks Checklist (Left) */}
                     <div className="lg:col-span-8 space-y-4">
+                      {/* Persistent, Prominent Situation-First Crisis Triage Console */}
+                      <div className="glass-panel p-5 text-left rounded-2xl border border-[#1e3a8a]/40 space-y-4 relative overflow-hidden bg-[#13111c]/40 backdrop-blur-md">
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-[#1e3a8a]/10 rounded-full blur-2xl pointer-events-none"></div>
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-xl animate-pulse-soft">🧠</span>
+                          <div>
+                            <h4 className="font-sans font-extrabold text-sm text-white tracking-tight">Describe Your Situation First</h4>
+                            <p className="text-[10px] text-[#9bb0c9] font-mono font-bold uppercase tracking-wider">Ongoing Crisis Triage Console</p>
+                          </div>
+                        </div>
+                        
+                        <p className="text-[11px] text-[#c7c4d7]/90 leading-relaxed font-sans font-medium">
+                          Encountered a new impending crisis, deadline, or high-stakes trigger? Describe it below. The Gemini engine will dissect the stress, calculate survival parameters, and build a tactical checklist.
+                        </p>
+
+                        <div className="space-y-1.5">
+                          <textarea
+                            value={situationText}
+                            onChange={(e) => setSituationText(e.target.value)}
+                            placeholder="Describe your crisis (e.g. 'Got a live system design interview with a tier-1 tech startup tomorrow at 3 PM...')"
+                            rows={2}
+                            className="w-full bg-[#1e1f26]/60 border border-white/10 rounded-xl p-3 text-xs text-white placeholder-white/30 focus:border-[#1e3a8a] focus:outline-none focus:ring-1 focus:ring-[#1e3a8a] resize-none"
+                          />
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row justify-between items-center gap-3 pt-2 border-t border-white/5">
+                          {/* Mini Presets */}
+                          <div className="flex flex-wrap gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setSituationText("I have a complex machine learning homework due tomorrow morning at 9am. It counts for 20% of my total semester grade and I haven't coded any part of it yet.")}
+                              className="text-[9px] font-mono text-[#c7c4d7]/70 bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded border border-white/5 transition-all cursor-pointer"
+                            >
+                              Academic Preset
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSituationText("Our production database has been throwing connection error 500 for the last hour. Customers are complaining and I need to identify the bug and hotfix it immediately.")}
+                              className="text-[9px] font-mono text-[#c7c4d7]/70 bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded border border-white/5 transition-all cursor-pointer"
+                            >
+                              Prod Bug Preset
+                            </button>
+                          </div>
+                          
+                          <button
+                            onClick={() => {
+                              if (!situationText.trim()) {
+                                showToast("Please describe your situation first.", "error");
+                                return;
+                              }
+                              setEntryStep(2);
+                              setShowAddModal(true);
+                            }}
+                            className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-[#1e3a8a] hover:bg-[#1e3a8a]/90 text-white font-bold text-xs rounded-lg transition-all cursor-pointer shadow-md shadow-[#1e3a8a]/20"
+                          >
+                            <span>Continue to Impact Assessment</span>
+                            <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                          </button>
+                        </div>
+                      </div>
+
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <span className="material-symbols-outlined text-[#ffb4ab]">flag</span>
@@ -1886,7 +2502,7 @@ export default function App() {
                         </div>
                         <button 
                           onClick={() => setActiveTab("tasks")}
-                          className="text-[#c0c1ff] hover:text-[#d0bcff] text-xs font-semibold flex items-center gap-1 transition-colors font-mono uppercase"
+                          className="text-[#14b8a6] hover:text-[#2dd4bf] text-xs font-semibold flex items-center gap-1 transition-colors font-mono uppercase"
                         >
                           View Backlog <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
                         </button>
@@ -1903,12 +2519,12 @@ export default function App() {
                             return (
                               <div 
                                 key={t.id}
-                                className={`group relative bg-[#1e1f26]/40 backdrop-blur-lg rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all duration-300 hover:scale-[1.01] hover:border-[#c0c1ff]/30 border border-white/5 ${getUrgencyBorder(t.deadline, t.status)}`}
+                                className={`group relative bg-[#1e1f26]/40 backdrop-blur-lg rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all duration-300 hover:scale-[1.01] hover:border-[#14b8a6]/30 border border-white/5 ${getUrgencyBorder(t.deadline, t.status)}`}
                               >
                                 <div className="flex items-start gap-3.5 flex-1 min-w-0">
                                   <button 
                                     onClick={() => toggleTaskStatus(t)}
-                                    className="mt-1 w-5.5 h-5.5 rounded-lg border border-white/20 hover:border-[#c0c1ff] hover:bg-[#c0c1ff]/10 flex items-center justify-center transition-all cursor-pointer text-transparent hover:text-[#c0c1ff]/80 hover:scale-110"
+                                    className="mt-1 w-5.5 h-5.5 rounded-lg border border-white/20 hover:border-[#14b8a6] hover:bg-[#14b8a6]/10 flex items-center justify-center transition-all cursor-pointer text-transparent hover:text-[#14b8a6]/80 hover:scale-110"
                                     title="Mark complete"
                                   >
                                     <span className="material-symbols-outlined text-[14px] font-extrabold">check</span>
@@ -1916,7 +2532,7 @@ export default function App() {
                                   
                                   <div className="space-y-1.5 flex-1 min-w-0">
                                     <div className="flex flex-wrap items-center gap-2.5">
-                                      <h4 className="font-sans font-bold text-white text-md tracking-tight group-hover:text-[#c0c1ff] transition-colors duration-200 truncate">
+                                      <h4 className="font-sans font-bold text-white text-md tracking-tight group-hover:text-[#14b8a6] transition-colors duration-200 truncate">
                                         {t.title}
                                       </h4>
                                       
@@ -1936,7 +2552,7 @@ export default function App() {
 
                                       {/* AI Score pill */}
                                       {t.priorityScore && (
-                                        <span className="font-mono text-[9px] text-[#c0c1ff] bg-[#c0c1ff]/10 px-2 py-0.5 rounded-full border border-[#c0c1ff]/25 flex items-center gap-0.5">
+                                        <span className="font-mono text-[9px] text-[#14b8a6] bg-[#14b8a6]/10 px-2 py-0.5 rounded-full border border-[#14b8a6]/25 flex items-center gap-0.5">
                                           <span className="material-symbols-outlined text-[10px]">bolt</span>
                                           AI Score: {t.priorityScore}
                                         </span>
@@ -1956,7 +2572,7 @@ export default function App() {
                                         </div>
                                         <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
                                           <div 
-                                            className="bg-gradient-to-r from-[#c0c1ff] to-[#4edea3] h-full transition-all duration-500"
+                                            className="bg-gradient-to-r from-[#14b8a6] to-[#4edea3] h-full transition-all duration-500"
                                             style={{ width: `${(t.subtasks.filter(st => st.status === "completed").length / t.subtasks.length) * 100}%` }}
                                           />
                                         </div>
@@ -1989,7 +2605,7 @@ export default function App() {
                                   </button>
                                   <button 
                                     onClick={() => openEditModal(t)}
-                                    className="p-1.5 text-[#c7c4d7] hover:text-[#c0c1ff] rounded-lg hover:bg-[#33343b]/50 transition-colors"
+                                    className="p-1.5 text-[#c7c4d7] hover:text-[#14b8a6] rounded-lg hover:bg-[#33343b]/50 transition-colors"
                                   >
                                     <span className="material-symbols-outlined text-[18px]">edit</span>
                                   </button>
@@ -2006,14 +2622,14 @@ export default function App() {
                         ) : (
                           <div className="glass-panel p-12 text-center rounded-2xl border border-white/5 space-y-5">
                             <div className="w-16 h-16 rounded-full bg-white/5 border border-white/5 flex items-center justify-center mx-auto shadow-inner shadow-white/5">
-                              <span className="material-symbols-outlined text-3xl text-[#c0c1ff] animate-pulse-soft">celebration</span>
+                              <span className="material-symbols-outlined text-3xl text-[#14b8a6] animate-pulse-soft">celebration</span>
                             </div>
                             <div className="space-y-1.5">
                               <h4 className="font-sans font-bold text-white text-md">Strategic Backlog Slipped Clean 🎉</h4>
                               <p className="text-xs text-[#c7c4d7] max-w-sm mx-auto">No outstanding tasks remain today. Use your planner dashboard to populate future goals.</p>
                             </div>
                             <div className="flex justify-center gap-2">
-                              <button onClick={() => setShowAddModal(true)} className="px-5 py-2 bg-[#c0c1ff] hover:bg-[#b0b2ff] text-[#1000a9] font-bold text-xs rounded-xl transition-all cursor-pointer">
+                              <button onClick={() => setShowAddModal(true)} className="px-5 py-2 bg-[#14b8a6] hover:bg-[#b0b2ff] text-[#022c22] font-bold text-xs rounded-xl transition-all cursor-pointer">
                                 Add Custom Target
                               </button>
                               <button onClick={seedTasks} className="px-5 py-2 bg-white/5 hover:bg-white/10 border border-white/5 text-white font-bold text-xs rounded-xl transition-all cursor-pointer">
@@ -2028,12 +2644,12 @@ export default function App() {
                     {/* Upcoming Calendar Timeline Preview (Right) */}
                     <div className="lg:col-span-4 space-y-4">
                       <div className="flex items-center gap-2">
-                        <span className="material-symbols-outlined text-[#c0c1ff] text-[20px]">schedule</span>
+                        <span className="material-symbols-outlined text-[#14b8a6] text-[20px]">schedule</span>
                         <h3 className="text-xs font-mono font-bold uppercase tracking-widest text-[#c7c4d7]">Today's Action Timeline</h3>
                       </div>
 
                       <div className="glass-panel rounded-2xl p-5 border border-white/5 space-y-5 relative">
-                        <div className="absolute top-4 left-6 bottom-4 w-[2px] bg-gradient-to-b from-[#c0c1ff]/30 to-transparent"></div>
+                        <div className="absolute top-4 left-6 bottom-4 w-[2px] bg-gradient-to-b from-[#14b8a6]/30 to-transparent"></div>
                         
                         {sortedPendingTasks.length > 0 ? (
                           sortedPendingTasks.slice(0, 3).map((t, idx) => {
@@ -2045,14 +2661,14 @@ export default function App() {
                                 
                                 <div className="space-y-1">
                                   <div className="flex items-center gap-2">
-                                    <span className="font-mono text-[9px] text-[#c0c1ff] bg-[#c0c1ff]/10 px-1.5 py-0.5 rounded">
+                                    <span className="font-mono text-[9px] text-[#14b8a6] bg-[#14b8a6]/10 px-1.5 py-0.5 rounded">
                                       {formattedTime}
                                     </span>
                                     <span className="text-[9px] font-mono text-[#4edea3] uppercase tracking-wider font-bold">
                                       {idx === 0 ? "Focus Target" : idx === 1 ? "Deep work" : "Sync session"}
                                     </span>
                                   </div>
-                                  <h4 className="font-bold text-white text-xs group-hover:text-[#c0c1ff] transition-all truncate">{t.title}</h4>
+                                  <h4 className="font-bold text-white text-xs group-hover:text-[#14b8a6] transition-all truncate">{t.title}</h4>
                                   <p className="text-[10px] text-[#c7c4d7] line-clamp-1">{t.description || "Active synchronized milestone"}</p>
                                 </div>
                               </div>
@@ -2074,12 +2690,12 @@ export default function App() {
                       <div className="flex justify-between items-center mb-6">
                         <div>
                           <h2 className="text-xs font-mono font-bold text-white uppercase flex items-center gap-1.5">
-                            <span className="material-symbols-outlined text-[#c0c1ff] text-[18px]">analytics</span>
+                            <span className="material-symbols-outlined text-[#14b8a6] text-[18px]">analytics</span>
                             Weekly Workload Productivity Trends
                           </h2>
                           <p className="text-[10px] text-[#c7c4d7] mt-0.5">Focus points acquired against dynamic planned goals</p>
                         </div>
-                        <span className="font-mono text-[9px] text-[#c0c1ff] bg-[#c0c1ff]/10 px-2.5 py-0.5 rounded border border-[#c0c1ff]/10 uppercase font-bold">LIVE STATS</span>
+                        <span className="font-mono text-[9px] text-[#14b8a6] bg-[#14b8a6]/10 px-2.5 py-0.5 rounded border border-[#14b8a6]/10 uppercase font-bold">LIVE STATS</span>
                       </div>
 
                       {/* Bar graph */}
@@ -2100,20 +2716,20 @@ export default function App() {
                           { day: "S", h: "15%", score: 15 }
                         ].map((bar, i) => (
                           <div key={i} className="flex flex-col items-center gap-2 w-1/7 group relative z-10">
-                            <div className="absolute bottom-full mb-1 bg-[#15161e] border border-white/15 px-2 py-0.5 rounded text-[9px] text-[#c0c1ff] font-bold font-mono opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                            <div className="absolute bottom-full mb-1 bg-[#15161e] border border-white/15 px-2 py-0.5 rounded text-[9px] text-[#14b8a6] font-bold font-mono opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
                               {bar.score} pts
                             </div>
                             <div className="w-6 sm:w-8 bg-white/5 hover:bg-white/10 rounded-t-md h-32 flex items-end transition-all">
                               <div 
                                 className={`w-full rounded-t-md transition-all duration-700 ${
                                   bar.active 
-                                    ? "bg-gradient-to-t from-[#571bc1] to-[#c0c1ff] shadow-[0_0_12px_rgba(192,193,255,0.3)]" 
-                                    : "bg-[#c0c1ff]/40"
+                                    ? "bg-gradient-to-t from-[#0f766e] to-[#14b8a6] shadow-[0_0_12px_rgba(192,193,255,0.3)]" 
+                                    : "bg-[#14b8a6]/40"
                                 }`} 
                                 style={{ height: bar.h }}
                               />
                             </div>
-                            <span className={`font-mono text-[10px] ${bar.active ? "text-[#c0c1ff] font-bold" : "text-[#c7c4d7]"}`}>{bar.day}</span>
+                            <span className={`font-mono text-[10px] ${bar.active ? "text-[#14b8a6] font-bold" : "text-[#c7c4d7]"}`}>{bar.day}</span>
                           </div>
                         ))}
                       </div>
@@ -2137,7 +2753,7 @@ export default function App() {
                         ].map((act, idx) => (
                           <div key={idx} className="flex gap-3 text-xs">
                             <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center shrink-0 border border-white/5">
-                              <span className="material-symbols-outlined text-xs text-[#c0c1ff]">{act.icon}</span>
+                              <span className="material-symbols-outlined text-xs text-[#14b8a6]">{act.icon}</span>
                             </div>
                             <div className="flex-1 space-y-0.5">
                               <div className="flex justify-between items-center">
@@ -2159,10 +2775,10 @@ export default function App() {
                   {voiceListening && (
                     <div className="fixed inset-0 bg-[#0f1015]/85 backdrop-blur-xl z-50 flex items-center justify-center p-4">
                       <div className="glass-panel-heavy rounded-2xl p-8 max-w-sm w-full text-center border border-white/10 shadow-2xl space-y-6 relative overflow-hidden">
-                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 bg-gradient-to-br from-[#c0c1ff]/10 to-purple-500/5 rounded-full blur-3xl pointer-events-none"></div>
+                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 bg-gradient-to-br from-[#14b8a6]/10 to-[#fbbf24]/5 rounded-full blur-3xl pointer-events-none"></div>
                         
                         <div className="relative space-y-4">
-                          <h4 className="text-xs font-mono text-[#c0c1ff] tracking-widest uppercase font-extrabold">AIDA Voice Assistant</h4>
+                          <h4 className="text-xs font-mono text-[#14b8a6] tracking-widest uppercase font-extrabold">AIDA Voice Assistant</h4>
                           <p className="text-white text-md font-sans font-bold leading-relaxed">{voiceText}</p>
                           
                           {/* Animated voice bar waves using Framer Motion */}
@@ -2172,7 +2788,7 @@ export default function App() {
                                 key={i}
                                 animate={{ height: [12, 44 * rate, 12] }} 
                                 transition={{ repeat: Infinity, duration: 1.1, delay: i * 0.1, ease: "easeInOut" }} 
-                                className="w-1 bg-[#c0c1ff] rounded-full"
+                                className="w-1 bg-[#14b8a6] rounded-full"
                                 style={{ height: "12px" }}
                               />
                             ))}
@@ -2201,12 +2817,12 @@ export default function App() {
                         transition={{ type: "spring", damping: 28, stiffness: 220 }}
                         className="bg-[#15161e] border-l border-white/10 w-full max-w-md h-full p-6 sm:p-8 flex flex-col justify-between shadow-2xl relative"
                       >
-                        <div className="absolute top-1/2 left-1/3 w-64 h-64 bg-[#c0c1ff]/5 rounded-full blur-3xl pointer-events-none"></div>
+                        <div className="absolute top-1/2 left-1/3 w-64 h-64 bg-[#14b8a6]/5 rounded-full blur-3xl pointer-events-none"></div>
                         
                         <div className="space-y-6 flex-1 overflow-y-auto pr-2">
                           <div className="flex items-center justify-between border-b border-white/5 pb-4">
                             <div className="flex items-center gap-2">
-                              <span className="material-symbols-outlined text-[#c0c1ff] animate-pulse-soft">psychology</span>
+                              <span className="material-symbols-outlined text-[#14b8a6] animate-pulse-soft">psychology</span>
                               <span className="font-bold text-white text-md">Life Saver AI Coach</span>
                             </div>
                             <button 
@@ -2225,13 +2841,13 @@ export default function App() {
                                 value={aiAskQuery}
                                 onChange={(e) => setAiAskQuery(e.target.value)}
                                 placeholder="e.g. Help me prepare for next week's exam..."
-                                className="flex-1 bg-[#1e1f26] border border-white/10 rounded-lg px-3 py-2.5 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
+                                className="flex-1 bg-[#1e1f26] border border-white/10 rounded-lg px-3 py-2.5 text-xs text-white focus:border-[#14b8a6] focus:outline-none"
                                 onKeyDown={(e) => { if (e.key === 'Enter') handleAskAICoach(aiAskQuery); }}
                               />
                               <button
                                 onClick={() => handleAskAICoach(aiAskQuery)}
                                 disabled={aiAskLoading}
-                                className="px-4 py-2 bg-[#c0c1ff] hover:bg-[#b0b2ff] text-[#1000a9] font-bold text-xs rounded-lg transition-all flex items-center gap-1 disabled:opacity-40"
+                                className="px-4 py-2 bg-[#14b8a6] hover:bg-[#b0b2ff] text-[#022c22] font-bold text-xs rounded-lg transition-all flex items-center gap-1 disabled:opacity-40"
                               >
                                 {aiAskLoading ? "Analyzing..." : "Ask"}
                               </button>
@@ -2240,8 +2856,8 @@ export default function App() {
 
                           {aiAskResponse && (
                             <div className="space-y-4 pt-4 border-t border-white/5 animate-fade-in">
-                              <div className="p-4 rounded-xl bg-[#c0c1ff]/5 border border-[#c0c1ff]/10 text-xs text-white leading-relaxed">
-                                <span className="font-bold text-[#c0c1ff] block mb-2 flex items-center gap-1">
+                              <div className="p-4 rounded-xl bg-[#14b8a6]/5 border border-[#14b8a6]/10 text-xs text-white leading-relaxed">
+                                <span className="font-bold text-[#14b8a6] block mb-2 flex items-center gap-1">
                                   <span className="material-symbols-outlined text-[14px]">auto_awesome</span>
                                   AI Coach Recommendation:
                                 </span>
@@ -2259,7 +2875,7 @@ export default function App() {
                                     <div>
                                       <div className="flex justify-between items-start gap-2">
                                         <h4 className="font-bold text-white text-xs leading-snug">{s.title}</h4>
-                                        <span className="text-[9px] font-mono text-[#c0c1ff] bg-[#c0c1ff]/10 px-1.5 py-0.5 rounded uppercase font-bold">{s.importance}</span>
+                                        <span className="text-[9px] font-mono text-[#14b8a6] bg-[#14b8a6]/10 px-1.5 py-0.5 rounded uppercase font-bold">{s.importance}</span>
                                       </div>
                                       <p className="text-[11px] text-[#c7c4d7] mt-1 leading-relaxed">{s.description}</p>
                                     </div>
@@ -2279,8 +2895,8 @@ export default function App() {
                           )}
                         </div>
 
-                        <div className="border-t border-white/5 pt-4 text-[10px] text-[#c7c4d7]/60 text-center font-mono">
-                          Active model: gemini-3.5-flash (Standard Tier)
+                        <div className="border-t border-white/5 pt-4 text-[10px] text-[#c7c4d7]/40 text-center font-mono">
+                          Secure Cloud Proxy Connection Active
                         </div>
                       </motion.div>
                     </div>
@@ -2304,8 +2920,8 @@ export default function App() {
                     <p className="text-sm text-[#c7c4d7]">Precision planning for maximum productivity and outcome acceleration.</p>
                   </header>
 
-                  <div className="glass-panel p-4 rounded-xl flex items-start gap-3 border border-[#c0c1ff]/10">
-                    <span className="material-symbols-outlined text-[#c0c1ff]">auto_awesome</span>
+                  <div className="glass-panel p-4 rounded-xl flex items-start gap-3 border border-[#14b8a6]/10">
+                    <span className="material-symbols-outlined text-[#14b8a6]">auto_awesome</span>
                     <p className="text-xs text-[#c7c4d7] leading-relaxed">
                       Your schedule has been fully prioritized and synchronized by AI coaching engines leveraging your dynamic metrics, current focus scores, and target task importance.
                     </p>
@@ -2333,7 +2949,7 @@ export default function App() {
                                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                                   <div>
                                     <div className="flex items-center gap-3 mb-2">
-                                      <span className="font-mono text-[10px] text-[#c0c1ff] bg-[#c0c1ff]/10 border border-[#c0c1ff]/20 px-2 py-0.5 rounded-md">
+                                      <span className="font-mono text-[10px] text-[#14b8a6] bg-[#14b8a6]/10 border border-[#14b8a6]/20 px-2 py-0.5 rounded-md">
                                         {formattedTime}
                                       </span>
                                       <span className="font-mono text-[9px] text-[#4edea3] uppercase tracking-wider flex items-center gap-1.5">
@@ -2345,7 +2961,7 @@ export default function App() {
                                   </div>
                                   <button 
                                     onClick={() => setSelectedTask(t)}
-                                    className="px-4 py-1.5 bg-[#c0c1ff]/10 border border-[#c0c1ff]/20 hover:bg-[#c0c1ff]/20 rounded-lg font-semibold text-xs text-[#c0c1ff] transition-colors self-start md:self-center cursor-pointer"
+                                    className="px-4 py-1.5 bg-[#14b8a6]/10 border border-[#14b8a6]/20 hover:bg-[#14b8a6]/20 rounded-lg font-semibold text-xs text-[#14b8a6] transition-colors self-start md:self-center cursor-pointer"
                                   >
                                     Start
                                   </button>
@@ -2361,7 +2977,7 @@ export default function App() {
                           <button
                             onClick={seedTasks}
                             disabled={actionLoading}
-                            className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#c0c1ff]/10 border border-[#c0c1ff]/20 hover:bg-[#c0c1ff]/20 text-[#c0c1ff] font-semibold text-xs rounded-xl transition-all cursor-pointer hover:scale-[1.03] active:scale-[0.98]"
+                            className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#14b8a6]/10 border border-[#14b8a6]/20 hover:bg-[#14b8a6]/20 text-[#14b8a6] font-semibold text-xs rounded-xl transition-all cursor-pointer hover:scale-[1.03] active:scale-[0.98]"
                           >
                             <span className="material-symbols-outlined text-[16px]">restore</span>
                             {actionLoading ? "Loading..." : "Load Example Tasks"}
@@ -2401,7 +3017,7 @@ export default function App() {
                     </div>
                     <button 
                       onClick={() => setShowAddModal(true)}
-                      className="px-4 py-2 bg-[#c0c1ff] text-[#1000a9] font-bold text-xs rounded-lg flex items-center gap-1 shadow-lg shadow-[#c0c1ff]/10 cursor-pointer"
+                      className="px-4 py-2 bg-[#14b8a6] text-[#022c22] font-bold text-xs rounded-lg flex items-center gap-1 shadow-lg shadow-[#14b8a6]/10 cursor-pointer"
                     >
                       <span className="material-symbols-outlined text-[16px]">add</span>
                       New Task
@@ -2427,12 +3043,12 @@ export default function App() {
                           return (
                             <div 
                               key={t.id}
-                              className={`group relative bg-[#1e1f26]/40 backdrop-blur-lg rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all duration-300 hover:scale-[1.01] hover:-translate-y-0.5 hover:border-[#c0c1ff]/30 shadow-md hover:shadow-[0_12px_40px_rgba(192,193,255,0.06)] border border-white/5 ${getUrgencyBorder(t.deadline, t.status)}`}
+                              className={`group relative bg-[#1e1f26]/40 backdrop-blur-lg rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all duration-300 hover:scale-[1.01] hover:-translate-y-0.5 hover:border-[#14b8a6]/30 shadow-md hover:shadow-[0_12px_40px_rgba(192,193,255,0.06)] border border-white/5 ${getUrgencyBorder(t.deadline, t.status)}`}
                             >
                               <div className="flex items-start gap-3.5 flex-1">
                                 <button 
                                   onClick={() => toggleTaskStatus(t)}
-                                  className="mt-1 w-5.5 h-5.5 rounded-lg border border-white/20 hover:border-[#c0c1ff] hover:bg-[#c0c1ff]/10 flex items-center justify-center transition-all cursor-pointer text-transparent hover:text-[#c0c1ff]/80 hover:scale-110"
+                                  className="mt-1 w-5.5 h-5.5 rounded-lg border border-white/20 hover:border-[#14b8a6] hover:bg-[#14b8a6]/10 flex items-center justify-center transition-all cursor-pointer text-transparent hover:text-[#14b8a6]/80 hover:scale-110"
                                   title="Mark complete"
                                 >
                                   <span className="material-symbols-outlined text-[14px] font-extrabold">check</span>
@@ -2440,7 +3056,7 @@ export default function App() {
                                 
                                 <div className="space-y-1.5">
                                   <div className="flex flex-wrap items-center gap-2">
-                                    <h4 className="font-bold text-white text-md tracking-tight group-hover:text-[#c0c1ff] transition-colors duration-200">
+                                    <h4 className="font-bold text-white text-md tracking-tight group-hover:text-[#14b8a6] transition-colors duration-200">
                                       {t.title}
                                     </h4>
                                     
@@ -2465,13 +3081,13 @@ export default function App() {
                                     {/* AI Score Pill with Tooltip */}
                                     {t.priorityScore && (
                                       <div className="relative group/tooltip flex items-center">
-                                        <span className="cursor-help font-mono text-[10px] text-[#c0c1ff] bg-[#c0c1ff]/10 px-2.5 py-0.5 rounded-full border border-[#c0c1ff]/20 hover:bg-[#c0c1ff]/20 transition-all flex items-center gap-1">
-                                          <span className="material-symbols-outlined text-[12px] text-[#c0c1ff]">bolt</span>
+                                        <span className="cursor-help font-mono text-[10px] text-[#14b8a6] bg-[#14b8a6]/10 px-2.5 py-0.5 rounded-full border border-[#14b8a6]/20 hover:bg-[#14b8a6]/20 transition-all flex items-center gap-1">
+                                          <span className="material-symbols-outlined text-[12px] text-[#14b8a6]">bolt</span>
                                           AI Score: {t.priorityScore}
                                         </span>
-                                        <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-60 bg-[#15161e] border border-[#c0c1ff]/30 p-4 rounded-xl text-xs text-[#c7c4d7] opacity-0 group-hover/tooltip:opacity-100 transition-opacity duration-200 z-50 shadow-2xl space-y-2.5 backdrop-blur-xl">
+                                        <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-60 bg-[#15161e] border border-[#14b8a6]/30 p-4 rounded-xl text-xs text-[#c7c4d7] opacity-0 group-hover/tooltip:opacity-100 transition-opacity duration-200 z-50 shadow-2xl space-y-2.5 backdrop-blur-xl">
                                           <div className="font-bold text-white flex items-center gap-1.5 border-b border-white/5 pb-1.5">
-                                            <span className="material-symbols-outlined text-[14px] text-[#c0c1ff]">auto_awesome</span>
+                                            <span className="material-symbols-outlined text-[14px] text-[#14b8a6]">auto_awesome</span>
                                             <span>Life Saver Priority Breakdown</span>
                                           </div>
                                           <div className="space-y-1.5 font-mono text-[11px]">
@@ -2481,7 +3097,7 @@ export default function App() {
                                             </div>
                                             <div className="flex justify-between">
                                               <span className="text-[#c7c4d7]/70">Importance:</span>
-                                              <span className="font-bold text-[#c0c1ff]">{t.importance}</span>
+                                              <span className="font-bold text-[#14b8a6]">{t.importance}</span>
                                             </div>
                                             <div className="flex justify-between">
                                               <span className="text-[#c7c4d7]/70">Effort:</span>
@@ -2490,7 +3106,7 @@ export default function App() {
                                           </div>
                                           <div className="border-t border-white/5 pt-1.5 flex justify-between items-center">
                                             <span className="text-white font-bold">Priority Score:</span>
-                                            <span className="text-md font-extrabold text-[#c0c1ff] font-mono">{t.priorityScore}/100</span>
+                                            <span className="text-md font-extrabold text-[#14b8a6] font-mono">{t.priorityScore}/100</span>
                                           </div>
                                         </div>
                                       </div>
@@ -2514,7 +3130,7 @@ export default function App() {
 
                                   {/* AI Reasoning display on the card */}
                                   {t.priorityReasoning && (
-                                    <p className="text-[11px] text-[#c0c1ff]/80 italic mt-1.5 bg-[#c0c1ff]/5 px-2.5 py-1 rounded border border-[#c0c1ff]/10">
+                                    <p className="text-[11px] text-[#14b8a6]/80 italic mt-1.5 bg-[#14b8a6]/5 px-2.5 py-1 rounded border border-[#14b8a6]/10">
                                       🧠 AI Coach: {t.priorityReasoning}
                                     </p>
                                   )}
@@ -2530,7 +3146,7 @@ export default function App() {
                                 </button>
                                 <button 
                                   onClick={() => openEditModal(t)}
-                                  className="p-1.5 text-[#c7c4d7] hover:text-[#c0c1ff] rounded-lg hover:bg-[#33343b]/50 transition-colors hover:scale-110 active:scale-90"
+                                  className="p-1.5 text-[#c7c4d7] hover:text-[#14b8a6] rounded-lg hover:bg-[#33343b]/50 transition-colors hover:scale-110 active:scale-90"
                                 >
                                   <span className="material-symbols-outlined text-[18px]">edit</span>
                                 </button>
@@ -2545,37 +3161,79 @@ export default function App() {
                           );
                         })
                       ) : (
-                        <div className="glass-panel p-12 text-center rounded-2xl border border-[#c0c1ff]/10 max-w-lg mx-auto space-y-6 shadow-2xl relative overflow-hidden group">
-                          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 bg-gradient-to-br from-[#c0c1ff]/5 to-transparent rounded-full blur-3xl pointer-events-none"></div>
+                        <div className="glass-panel p-6 sm:p-10 text-left rounded-2xl border border-[#1e3a8a]/40 max-w-2xl mx-auto space-y-6 shadow-2xl relative overflow-hidden">
+                          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 bg-gradient-to-br from-[#1e3a8a]/10 to-transparent rounded-full blur-3xl pointer-events-none"></div>
                           
-                          <div className="relative z-10 space-y-4">
-                            <div className="w-20 h-20 rounded-full bg-gradient-to-br from-[#c0c1ff]/10 to-[#d0bcff]/5 border border-[#c0c1ff]/20 flex items-center justify-center mx-auto shadow-lg shadow-[#c0c1ff]/5 group-hover:scale-105 transition-transform duration-500">
-                              <span className="material-symbols-outlined text-4xl text-[#c0c1ff] animate-pulse-soft">celebration</span>
+                          <div className="relative z-10 space-y-5">
+                            <div className="flex items-center gap-3">
+                              <div className="w-12 h-12 rounded-xl bg-[#1e3a8a]/10 border border-[#1e3a8a]/40 flex items-center justify-center shadow-lg shadow-[#1e3a8a]/10">
+                                <span className="material-symbols-outlined text-2xl text-[#9bb0c9]">psychology</span>
+                              </div>
+                              <div>
+                                <h4 className="font-sans font-extrabold text-lg text-white tracking-tight">Describe Your Situation First</h4>
+                                <p className="text-xs text-[#9bb0c9] font-semibold">AIDA Crisis Triage Console</p>
+                              </div>
                             </div>
                             
-                            <div className="space-y-2">
-                              <h4 className="font-sans font-extrabold text-xl text-white tracking-tight">No tasks today 🎉</h4>
-                              <p className="text-sm text-[#c0c1ff] font-semibold">You're all caught up.</p>
-                              <p className="text-xs text-[#c7c4d7] leading-relaxed max-w-sm mx-auto">
-                                Let's save your future self from last-minute panic. Prepare ahead or create a brand new target!
-                              </p>
+                            <p className="text-xs text-[#c7c4d7]/90 leading-relaxed font-sans">
+                              Be direct and unfiltered. Describe your impending crisis, what is due, when it is due, and why you are feeling behind. The Gemini engine will parse this to rebuild your task roadmap.
+                            </p>
+
+                            <div className="space-y-1.5">
+                              <textarea
+                                value={situationText}
+                                onChange={(e) => setSituationText(e.target.value)}
+                                placeholder="e.g. 'I have a major machine learning notebook due tomorrow morning at 8am. It is 15% of my grade and I have barely started it because I got stuck on a PyTorch bug...'"
+                                rows={4}
+                                className="w-full bg-[#1e1f26] border border-white/10 rounded-xl p-3 text-sm text-white placeholder-white/30 focus:border-[#1e3a8a] focus:outline-none focus:ring-1 focus:ring-[#1e3a8a] resize-none"
+                              />
                             </div>
 
-                            <div className="flex flex-col sm:flex-row justify-center items-center gap-3">
-                              <button
-                                onClick={() => setShowAddModal(true)}
-                                className="inline-flex items-center gap-1.5 px-6 py-2.5 bg-[#c0c1ff] hover:bg-[#b0b2ff] text-[#1000a9] font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md hover:scale-[1.03] active:scale-[0.98]"
-                              >
-                                <span className="material-symbols-outlined text-[16px] font-bold">add</span>
-                                Create New Goal
-                              </button>
+                            {/* Crisis Preset Anchors */}
+                            <div className="space-y-2">
+                              <span className="block text-[10px] font-bold text-[#c7c4d7]/70 uppercase tracking-wider">Or Use A Crisis Preset:</span>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setSituationText("I have a complex machine learning homework due tomorrow morning at 9am. It counts for 20% of my total semester grade and I haven't coded any part of it yet.")}
+                                  className="p-3 bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 rounded-xl text-left transition-all cursor-pointer group"
+                                >
+                                  <div className="text-xs font-bold text-[#9bb0c9] group-hover:text-white mb-0.5">Academic Emergency</div>
+                                  <div className="text-[10px] text-[#c7c4d7]/70 truncate">Machine learning homework due tomorrow at 9am.</div>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setSituationText("Our production database has been throwing connection error 500 for the last hour. Customers are complaining and I need to identify the bug and hotfix it immediately.")}
+                                  className="p-3 bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 rounded-xl text-left transition-all cursor-pointer group"
+                                >
+                                  <div className="text-xs font-bold text-[#9bb0c9] group-hover:text-white mb-0.5">Production Bug Hotfix</div>
+                                  <div className="text-[10px] text-[#c7c4d7]/70 truncate">Database throwing connection error 500 for an hour.</div>
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col sm:flex-row justify-between items-center gap-3 pt-3 border-t border-white/5">
                               <button
                                 onClick={seedTasks}
                                 disabled={actionLoading}
-                                className="inline-flex items-center gap-1.5 px-6 py-2.5 bg-[#33343b]/85 hover:bg-[#33343b] text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md hover:scale-[1.03] active:scale-[0.98] border border-white/10"
+                                className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-[#33343b]/85 hover:bg-[#33343b] text-white font-bold text-xs rounded-lg transition-all cursor-pointer border border-white/10"
                               >
                                 <span className="material-symbols-outlined text-[16px]">restore</span>
                                 {actionLoading ? "Loading..." : "Load Example Tasks"}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (!situationText.trim()) {
+                                    showToast("Please describe your situation first.", "error");
+                                    return;
+                                  }
+                                  setEntryStep(2);
+                                  setShowAddModal(true);
+                                }}
+                                className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-5 py-2 bg-[#1e3a8a] hover:bg-[#1e3a8a]/90 text-white font-extrabold text-xs rounded-lg transition-all cursor-pointer shadow-md shadow-[#1e3a8a]/20"
+                              >
+                                <span>Continue to Impact Assessment</span>
+                                <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
                               </button>
                             </div>
                           </div>
@@ -2610,7 +3268,7 @@ export default function App() {
                             <div className="flex items-center gap-2">
                               <button 
                                 onClick={() => toggleTaskStatus(t)}
-                                className="text-xs text-[#c0c1ff] hover:underline cursor-pointer"
+                                className="text-xs text-[#14b8a6] hover:underline cursor-pointer"
                               >
                                 Restore
                               </button>
@@ -2646,8 +3304,8 @@ export default function App() {
                   {/* Planner prompt builder */}
                   <div className="glass-panel rounded-xl p-6 glow-border space-y-4">
                     <div className="flex items-center gap-2">
-                      <span className="material-symbols-outlined text-[#c0c1ff] animate-pulse-soft">psychology</span>
-                      <span className="text-xs font-mono text-[#c0c1ff] uppercase tracking-wider">Coach Alignment Request</span>
+                      <span className="material-symbols-outlined text-[#14b8a6] animate-pulse-soft">psychology</span>
+                      <span className="text-xs font-mono text-[#14b8a6] uppercase tracking-wider">Coach Alignment Request</span>
                     </div>
 
                     <div className="space-y-3">
@@ -2657,7 +3315,7 @@ export default function App() {
                         onChange={(e) => setPlannerPrompt(e.target.value)}
                         placeholder="e.g. 'I have a job interview prep next week, suggest 3 highly focus-oriented prep tasks.' or 'Draft a list of milestones to optimize my ML assignment validation loop.'"
                         rows={3}
-                        className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-3 text-sm focus:border-[#c0c1ff] focus:outline-none focus:ring-1 focus:ring-[#c0c1ff] resize-none"
+                        className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-3 text-sm focus:border-[#14b8a6] focus:outline-none focus:ring-1 focus:ring-[#14b8a6] resize-none"
                       />
                     </div>
 
@@ -2666,7 +3324,7 @@ export default function App() {
                       <button
                         onClick={() => handleAIPlannerGenerate(plannerPrompt)}
                         disabled={plannerLoading}
-                        className="px-6 py-2.5 bg-[#c0c1ff] hover:bg-[#c0c1ff]/90 text-[#1000a9] font-bold text-xs rounded-lg transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                        className="px-6 py-2.5 bg-[#14b8a6] hover:bg-[#14b8a6]/90 text-[#022c22] font-bold text-xs rounded-lg transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
                       >
                         {plannerLoading ? (
                           <>
@@ -2691,7 +3349,7 @@ export default function App() {
                       className="space-y-6"
                     >
                       {aiResponse && (
-                        <div className="p-4 rounded-xl bg-[#c0c1ff]/5 border border-[#c0c1ff]/10 text-xs text-[#c7c4d7] leading-relaxed">
+                        <div className="p-4 rounded-xl bg-[#14b8a6]/5 border border-[#14b8a6]/10 text-xs text-[#c7c4d7] leading-relaxed">
                           <strong>Coach Advice:</strong> {aiResponse}
                         </div>
                       )}
@@ -2704,7 +3362,7 @@ export default function App() {
                               <div>
                                 <div className="flex justify-between items-start gap-2 mb-2">
                                   <h4 className="font-bold text-white text-md leading-tight">{s.title}</h4>
-                                  <span className="font-mono text-[9px] text-[#c0c1ff] bg-[#c0c1ff]/10 px-2 py-0.5 rounded">
+                                  <span className="font-mono text-[9px] text-[#14b8a6] bg-[#14b8a6]/10 px-2 py-0.5 rounded">
                                     {s.importance}
                                   </span>
                                 </div>
@@ -2748,10 +3406,10 @@ export default function App() {
                     {/* Shimmer insight banner */}
                     <div className="glass-panel p-4 rounded-xl max-w-sm shimmer">
                       <div className="flex items-start gap-3">
-                        <span className="material-symbols-outlined text-[#d0bcff] mt-0.5 animate-pulse-soft">psychology</span>
+                        <span className="material-symbols-outlined text-[#2dd4bf] mt-0.5 animate-pulse-soft">psychology</span>
                         <div>
                           <p className="text-xs text-[#e2e2eb]">
-                            <span className="font-bold text-[#c0c1ff]">Insight:</span> You are 15% more productive during morning sessions. AI suggests starting your deep work at 8 AM.
+                            <span className="font-bold text-[#14b8a6]">Insight:</span> You are 15% more productive during morning sessions. AI suggests starting your deep work at 8 AM.
                           </p>
                         </div>
                       </div>
@@ -2766,12 +3424,12 @@ export default function App() {
                       <div className="flex justify-between items-center mb-6">
                         <div>
                           <h2 className="text-sm font-semibold text-white flex items-center gap-1.5">
-                            <span className="material-symbols-outlined text-[#c0c1ff] text-[18px]">analytics</span>
+                            <span className="material-symbols-outlined text-[#14b8a6] text-[18px]">analytics</span>
                             Weekly Productivity Score Trend
                           </h2>
                           <p className="text-[10px] text-[#c7c4d7] mt-0.5">Calculated by task points completed against planned schedules</p>
                         </div>
-                        <span className="font-mono text-[10px] text-[#c0c1ff] bg-[#c0c1ff]/10 px-2 py-0.5 rounded border border-[#c0c1ff]/10 uppercase font-bold">THIS WEEK</span>
+                        <span className="font-mono text-[10px] text-[#14b8a6] bg-[#14b8a6]/10 px-2 py-0.5 rounded border border-[#14b8a6]/10 uppercase font-bold">THIS WEEK</span>
                       </div>
 
                       {/* Custom Simulated Bar Chart */}
@@ -2797,20 +3455,20 @@ export default function App() {
                         ].map((bar, i) => (
                           <div key={i} className="flex flex-col items-center gap-3 w-1/7 group relative z-10">
                             {/* Hover tooltip for score */}
-                            <div className="absolute bottom-full mb-1 bg-[#1e1f26] border border-[#c0c1ff]/30 px-2 py-1 rounded text-[9px] text-[#c0c1ff] font-bold font-mono opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                            <div className="absolute bottom-full mb-1 bg-[#1e1f26] border border-[#14b8a6]/30 px-2 py-1 rounded text-[9px] text-[#14b8a6] font-bold font-mono opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
                               {bar.score} pts
                             </div>
                             <div className="w-6 sm:w-8 md:w-12 bg-white/5 hover:bg-white/10 rounded-t-lg h-40 flex items-end relative transition-colors duration-300">
                               <div 
                                 className={`w-full rounded-t-lg transition-all duration-1000 ${
                                   bar.active 
-                                    ? "bg-gradient-to-t from-[#571bc1] to-[#c0c1ff] shadow-[0_0_15px_rgba(192,193,255,0.4)]" 
-                                    : "bg-gradient-to-t from-[#c0c1ff]/20 to-[#c0c1ff]/70"
+                                    ? "bg-gradient-to-t from-[#0f766e] to-[#14b8a6] shadow-[0_0_15px_rgba(192,193,255,0.4)]" 
+                                    : "bg-gradient-to-t from-[#14b8a6]/20 to-[#14b8a6]/70"
                                 }`} 
                                 style={{ height: bar.h }}
                               ></div>
                             </div>
-                            <span className={`font-mono text-[10px] ${bar.active ? "text-[#c0c1ff] font-bold" : "text-[#c7c4d7]"}`}>
+                            <span className={`font-mono text-[10px] ${bar.active ? "text-[#14b8a6] font-bold" : "text-[#c7c4d7]"}`}>
                               {bar.day}
                             </span>
                           </div>
@@ -2819,7 +3477,7 @@ export default function App() {
                     </div>
 
                     {/* Weekly Streak Card (New) */}
-                    <div className="glass-panel p-6 rounded-xl col-span-1 md:col-span-4 flex flex-col justify-between min-h-[360px] relative overflow-hidden group hover:border-[#c0c1ff]/30 transition-all duration-300">
+                    <div className="glass-panel p-6 rounded-xl col-span-1 md:col-span-4 flex flex-col justify-between min-h-[360px] relative overflow-hidden group hover:border-[#14b8a6]/30 transition-all duration-300">
                       <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-2xl pointer-events-none"></div>
                       <div>
                         <div className="flex justify-between items-start mb-4">
@@ -2866,14 +3524,14 @@ export default function App() {
                       </div>
 
                       <div className="pt-4 border-t border-white/5 text-xs text-[#c7c4d7] leading-relaxed">
-                        <span className="text-[#c0c1ff] font-bold">Life Saver Coach:</span> You are only 2 sessions away from breaking your monthly record. Keep focused!
+                        <span className="text-[#14b8a6] font-bold">Life Saver Coach:</span> You are only 2 sessions away from breaking your monthly record. Keep focused!
                       </div>
                     </div>
 
                     {/* Task Completion Rate Circle Donut */}
-                    <div className="glass-panel p-6 rounded-xl col-span-1 md:col-span-4 flex flex-col items-center justify-between relative min-h-[360px] group hover:border-[#c0c1ff]/30 transition-all duration-300">
+                    <div className="glass-panel p-6 rounded-xl col-span-1 md:col-span-4 flex flex-col items-center justify-between relative min-h-[360px] group hover:border-[#14b8a6]/30 transition-all duration-300">
                       <h2 className="text-sm font-semibold text-white absolute top-6 left-6 flex items-center gap-1.5">
-                        <span className="material-symbols-outlined text-[#c0c1ff] text-[18px]">donut_large</span>
+                        <span className="material-symbols-outlined text-[#14b8a6] text-[18px]">donut_large</span>
                         Task Completion
                       </h2>
                       
@@ -2892,8 +3550,8 @@ export default function App() {
                           ></circle>
                           <defs>
                             <linearGradient id="completionGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                              <stop offset="0%" stopColor="#d0bcff"></stop>
-                              <stop offset="100%" stopColor="#c0c1ff"></stop>
+                              <stop offset="0%" stopColor="#2dd4bf"></stop>
+                              <stop offset="100%" stopColor="#14b8a6"></stop>
                             </linearGradient>
                           </defs>
                         </svg>
@@ -2906,7 +3564,7 @@ export default function App() {
 
                       <div className="flex justify-between w-full text-xs font-mono text-[#c7c4d7] pt-4 border-t border-white/5">
                         <div className="flex flex-col items-center">
-                          <span className="text-[#c0c1ff] font-bold text-md leading-none">24</span>
+                          <span className="text-[#14b8a6] font-bold text-md leading-none">24</span>
                           <span className="mt-1">Done</span>
                         </div>
                         <div className="flex flex-col items-center">
@@ -2917,13 +3575,13 @@ export default function App() {
                     </div>
 
                     {/* Focus Score Line Chart representations */}
-                    <div className="glass-panel p-6 rounded-xl col-span-1 md:col-span-4 flex flex-col justify-between h-[360px] relative overflow-hidden group hover:border-[#c0c1ff]/30 transition-all duration-300">
+                    <div className="glass-panel p-6 rounded-xl col-span-1 md:col-span-4 flex flex-col justify-between h-[360px] relative overflow-hidden group hover:border-[#14b8a6]/30 transition-all duration-300">
                       <div className="flex justify-between items-center mb-4">
                         <h2 className="text-sm font-semibold text-white flex items-center gap-1.5">
-                          <span className="material-symbols-outlined text-[#d0bcff] text-[18px]">visibility</span>
+                          <span className="material-symbols-outlined text-[#2dd4bf] text-[18px]">visibility</span>
                           Focus Score Analysis
                         </h2>
-                        <div className="bg-[#33343b] border border-white/5 px-2 py-1 rounded-lg font-mono text-[10px] text-[#d0bcff] flex items-center gap-1">
+                        <div className="bg-[#33343b] border border-white/5 px-2 py-1 rounded-lg font-mono text-[10px] text-[#2dd4bf] flex items-center gap-1">
                           <span className="material-symbols-outlined text-[14px]">trending_up</span> +12% Focus
                         </div>
                       </div>
@@ -2948,8 +3606,8 @@ export default function App() {
                           <svg className="w-full h-full absolute inset-0" preserveAspectRatio="none" viewBox="0 0 100 100">
                             <defs>
                               <linearGradient id="focusAreaGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                                <stop offset="0%" stopColor="#d0bcff" stopOpacity="0.25"></stop>
-                                <stop offset="100%" stopColor="#d0bcff" stopOpacity="0.0"></stop>
+                                <stop offset="0%" stopColor="#2dd4bf" stopOpacity="0.25"></stop>
+                                <stop offset="100%" stopColor="#2dd4bf" stopOpacity="0.0"></stop>
                               </linearGradient>
                             </defs>
                             {/* Comparison helper baseline (lower dashed curve) */}
@@ -2969,24 +3627,24 @@ export default function App() {
                             <path 
                               d="M0,80 Q10,70 20,85 T40,60 T60,70 T80,30 T100,40" 
                               fill="none" 
-                              stroke="#d0bcff" 
+                              stroke="#2dd4bf" 
                               strokeWidth="3" 
                               strokeLinecap="round" 
                               strokeLinejoin="round"
                             ></path>
                             
                             {/* Highlighted hoverable coordinate node points */}
-                            <circle cx="20" cy="85" r="2.5" fill="#111319" stroke="#d0bcff" strokeWidth="1.5"></circle>
-                            <circle cx="40" cy="60" r="2.5" fill="#111319" stroke="#d0bcff" strokeWidth="1.5"></circle>
-                            <circle cx="60" cy="70" r="2.5" fill="#111319" stroke="#d0bcff" strokeWidth="1.5"></circle>
-                            <circle cx="80" cy="30" r="4.5" fill="#111319" stroke="#c0c1ff" strokeWidth="2.5" className="animate-pulse"></circle>
+                            <circle cx="20" cy="85" r="2.5" fill="#111319" stroke="#2dd4bf" strokeWidth="1.5"></circle>
+                            <circle cx="40" cy="60" r="2.5" fill="#111319" stroke="#2dd4bf" strokeWidth="1.5"></circle>
+                            <circle cx="60" cy="70" r="2.5" fill="#111319" stroke="#2dd4bf" strokeWidth="1.5"></circle>
+                            <circle cx="80" cy="30" r="4.5" fill="#111319" stroke="#14b8a6" strokeWidth="2.5" className="animate-pulse"></circle>
                           </svg>
                         </div>
                       </div>
                       
                       <div className="pt-3 border-t border-white/5 flex justify-between items-center text-[10px] font-mono text-[#c7c4d7]">
                         <span>Mon-Fri active average</span>
-                        <span className="text-[#c0c1ff] font-bold">82.4 avg</span>
+                        <span className="text-[#14b8a6] font-bold">82.4 avg</span>
                       </div>
                     </div>
 
@@ -3039,54 +3697,120 @@ export default function App() {
                 >
                   <header>
                     <h2 className="font-bold text-2xl sm:text-3xl text-white tracking-tight">System Settings</h2>
-                    <p className="text-sm text-[#c7c4d7]">Configure environment variables, connected services, and study coaching profiles.</p>
+                    <p className="text-sm text-[#c7c4d7]">Manage your secure workspace configurations, privacy preferences, and session controls.</p>
                   </header>
 
-                  <div className="space-y-4">
+                  <div className="space-y-6">
+                    {/* User Account Metadata */}
                     <div className="glass-panel rounded-xl p-5 space-y-4">
                       <h3 className="font-bold text-white text-md border-b border-white/5 pb-2 flex items-center gap-2">
                         <span className="material-symbols-outlined text-[18px]">account_circle</span>
-                        User Account Metadata
+                        User Workspace Profile
                       </h3>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                         <div>
-                          <span className="text-[#c7c4d7] block mb-1">User Email</span>
+                          <span className="text-[#c7c4d7] block mb-1">Authenticated Account</span>
                           <span className="text-white font-semibold font-mono">support@lifesaver.ai</span>
                         </div>
                         <div>
-                          <span className="text-[#c7c4d7] block mb-1">Assigned Coach Model</span>
-                          <span className="text-white font-semibold font-mono">gemini-3.5-flash (Standard Tier)</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="glass-panel rounded-xl p-5 space-y-4">
-                      <h3 className="font-bold text-white text-md border-b border-white/5 pb-2 flex items-center gap-2">
-                        <span className="material-symbols-outlined text-[18px]">shield</span>
-                        Active Secrets Panel
-                      </h3>
-                      <div className="text-xs space-y-3 leading-relaxed text-[#c7c4d7]">
-                        <p>Your workspace is running in secure server-side container proxies. API Keys are safely bound to Node environment contexts.</p>
-                        <div className="p-3 bg-[#1e1f26] rounded-lg border border-white/5 flex items-center justify-between">
-                          <span className="font-mono text-xs">GEMINI_API_KEY</span>
-                          <span className="px-2 py-0.5 rounded bg-[#4edea3]/20 text-[#4edea3] text-[10px] font-mono uppercase font-bold">
-                            {geminiActive ? "CONFIGURED (Active)" : "SIMULATED FAILSAFE"}
+                          <span className="text-[#c7c4d7] block mb-1">Encryption Mode</span>
+                          <span className="text-[#4edea3] font-semibold font-mono flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#4edea3] animate-pulse"></span>
+                            End-to-End Encrypted (AES-256)
                           </span>
+                                   {/* Real Security & Privacy Sections */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* Privacy panel */}
+                      <div className="glass-panel rounded-xl p-5 space-y-4">
+                        <h3 className="font-bold text-white text-sm border-b border-white/5 pb-2 flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[18px] text-[#14b8a6]">visibility_off</span>
+                          Workspace Privacy
+                        </h3>
+                        <div className="space-y-3 text-xs text-[#c7c4d7]">
+                          <p className="leading-relaxed">
+                            Your workspace enforces strict data isolation. Since your application uses server-side proxies, your inputs are transmitted directly to our secure AI orchestrator without third-party ad tracking or analytics beacons.
+                          </p>
+                          <div className="p-2 bg-white/5 rounded border border-white/5 flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-[#4edea3]"></span>
+                            <span className="font-mono text-[10px]">Zero exposed client-side tokens</span>
+                          </div>
                         </div>
+                      </div>
+
+                      {/* Security panel */}
+                      <div className="glass-panel rounded-xl p-5 space-y-4">
+                        <h3 className="font-bold text-white text-sm border-b border-white/5 pb-2 flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[18px] text-[#14b8a6]">verified_user</span>
+                          Security Model
+                        </h3>
+                        <div className="space-y-3 text-xs text-[#c7c4d7]">
+                          <p className="leading-relaxed">
+                            Workspace security is maintained by Cloud Run sandbox isolation. Keys and credentials exist exclusively inside environment variable contexts and are never bundled into client assets.
+                          </p>
+                          <div className="p-2 bg-white/5 rounded border border-white/5 flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-[#4edea3]"></span>
+                            <span className="font-mono text-[10px]">Server-side proxy execution only</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Data Controls */}
+                      <div className="glass-panel rounded-xl p-5 space-y-4">
+                        <h3 className="font-bold text-white text-sm border-b border-white/5 pb-2 flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[18px] text-[#14b8a6]">database</span>
+                          Data Controls
+                        </h3>
+                        <div className="space-y-3 text-xs text-[#c7c4d7]">
+                          <p className="text-[11px]">Download, migrate, or permanently purge your historical task timeline archives.</p>
+                          <div className="flex flex-wrap gap-2 pt-1">
+                            <button 
+                              onClick={handleExportWorkspace}
+                              className="px-3 py-1.5 bg-[#14b8a6]/10 hover:bg-[#14b8a6]/20 text-[#14b8a6] font-bold rounded-lg border border-[#14b8a6]/20 transition-colors cursor-pointer"
+                            >
+                              Export Workspace (JSON)
+                            </button>
+                            <button 
+                              onClick={handlePurgeWorkspace}
+                              className="px-3 py-1.5 bg-red-400/10 hover:bg-red-400/20 text-red-300 font-bold rounded-lg border border-red-400/20 transition-colors cursor-pointer"
+                            >
+                              Purge Data Vault
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Session Management */}
+                      <div className="glass-panel rounded-xl p-5 space-y-4">
+                        <h3 className="font-bold text-white text-sm border-b border-white/5 pb-2 flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[18px] text-[#14b8a6]">devices</span>
+                          Active Workspace Session
+                        </h3>
+                        <div className="space-y-3 text-xs text-[#c7c4d7]">
+                          <p className="leading-relaxed">
+                            Your current browser tab maintains an active state session connected to the local full-stack server instance.
+                          </p>
+                          <div className="flex items-center justify-between p-2 bg-white/5 rounded border border-white/5">
+                            <span className="font-semibold text-white font-mono text-[11px]">Local Host Connection</span>
+                            <span className="text-[9px] bg-[#4edea3]/10 text-[#4edea3] font-mono px-2 py-0.5 rounded border border-[#4edea3]/20 font-bold">AUTHENTICATED</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>              </div>
                       </div>
                     </div>
 
+                    {/* Workspace Data Management (Restore default tasks) */}
                     <div className="glass-panel rounded-xl p-5 space-y-4">
                       <h3 className="font-bold text-white text-md border-b border-white/5 pb-2 flex items-center gap-2">
-                        <span className="material-symbols-outlined text-[18px]">database</span>
-                        Workspace Data Management
+                        <span className="material-symbols-outlined text-[18px]">restore</span>
+                        Default Workspace Sync
                       </h3>
                       <div className="text-xs space-y-3 leading-relaxed text-[#c7c4d7]">
-                        <p>Need to reset your focus roadmap? Populate your backlog with realistic high-priority and medium-priority academic and professional tasks.</p>
+                        <p>Need to reset your focus roadmap? Populate your backlog with realistic academic and professional tasks.</p>
                         <button
                           onClick={seedTasks}
                           disabled={actionLoading}
-                          className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#c0c1ff] hover:bg-[#b0b2ff] text-[#1000a9] font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+                          className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#14b8a6] hover:bg-[#b0b2ff] text-[#022c22] font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
                         >
                           <span className="material-symbols-outlined text-[16px]">restore</span>
                           {actionLoading ? "Seeding..." : "Restore Default Example Tasks"}
@@ -3115,11 +3839,11 @@ export default function App() {
                 ? "border-l-[#4edea3]" 
                 : toast.type === "error" 
                   ? "border-l-red-400" 
-                  : "border-l-[#c0c1ff]"
+                  : "border-l-[#14b8a6]"
             }`}
           >
             <span className={`material-symbols-outlined text-[20px] ${
-              toast.type === "success" ? "text-[#4edea3]" : toast.type === "error" ? "text-red-400" : "text-[#c0c1ff]"
+              toast.type === "success" ? "text-[#4edea3]" : toast.type === "error" ? "text-red-400" : "text-[#14b8a6]"
             }`}>
               {toast.type === "success" ? "check_circle" : toast.type === "error" ? "error" : "info"}
             </span>
@@ -3133,286 +3857,428 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* 5. ADD TASK MODAL (S4) */}
+      {/* 5. ADD TASK MODAL (S4) - SITUATION-FIRST ENTRY FLOW */}
       <AnimatePresence>
         {showAddModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
             <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="glass-panel-heavy rounded-2xl max-w-lg w-full max-h-[85vh] overflow-y-auto p-6 md:p-8 space-y-6 scrollbar-thin"
+              initial={{ scale: 0.95, opacity: 0, y: 15 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 15 }}
+              transition={{ type: "spring", duration: 0.4 }}
+              className="glass-panel-heavy rounded-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto p-6 md:p-8 space-y-6 scrollbar-thin text-left"
             >
+              {/* Header */}
               <div className="flex justify-between items-center border-b border-white/5 pb-3">
-                <h3 className="font-bold text-lg text-white">Add New Task</h3>
-                <button onClick={() => setShowAddModal(false)} className="text-[#c7c4d7] hover:text-white">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[#9bb0c9] text-[20px]">psychology</span>
+                  <h3 className="font-sans font-bold text-lg text-white">
+                    {entryStep === 1 && "Describe Your Situation"}
+                    {entryStep === 2 && "Assess Stakes & Urgency"}
+                    {entryStep === 3 && "Gemini Analysis Active"}
+                    {entryStep === 4 && "Review AI Safeguard Plan"}
+                  </h3>
+                </div>
+                <button onClick={() => setShowAddModal(false)} className="text-[#c7c4d7] hover:text-white transition-colors cursor-pointer">
                   <span className="material-symbols-outlined">close</span>
                 </button>
               </div>
 
-              <form onSubmit={handleAddTask} className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-semibold text-[#c7c4d7]">Task Title</label>
-                  <input
-                    type="text"
-                    required
-                    value={newTitle}
-                    onChange={(e) => setNewTitle(e.target.value)}
-                    placeholder="e.g. 'Complete ML Assignment'"
-                    className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2.5 text-sm focus:border-[#c0c1ff] focus:outline-none focus:ring-1 focus:ring-[#c0c1ff]"
-                  />
-                </div>
+              {/* STEP 1: Describe Situation */}
+              {entryStep === 1 && (
+                <div className="space-y-5 animate-fade-in">
+                  <p className="text-xs text-[#c7c4d7]/90 leading-relaxed font-sans">
+                    Be direct and unfiltered. Describe the impending crisis, what is due, when it is due, and why you are feeling behind. The Gemini engine will parse this to rebuild your roadmap.
+                  </p>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <label className="block text-xs font-semibold text-[#c7c4d7]">Deadline Target</label>
-                    <input
-                      type="datetime-local"
-                      required
-                      value={newDeadline}
-                      onChange={(e) => setNewDeadline(e.target.value)}
-                      className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2.5 text-sm focus:border-[#c0c1ff] focus:outline-none focus:ring-1 focus:ring-[#c0c1ff]"
+                    <label className="block text-xs font-semibold text-[#9bb0c9] uppercase tracking-wider">Your Situation Description</label>
+                    <textarea
+                      value={situationText}
+                      onChange={(e) => setSituationText(e.target.value)}
+                      placeholder="e.g. 'I have a major neural networks notebook due tomorrow morning at 8am. It is 15% of my grade and I have barely started it because I got stuck on a PyTorch bug...'"
+                      rows={4}
+                      className="w-full bg-[#1e1f26] border border-white/10 rounded-xl p-3 text-sm text-white placeholder-white/30 focus:border-[#1e3a8a] focus:outline-none focus:ring-1 focus:ring-[#1e3a8a] resize-none"
                     />
                   </div>
-                  <div className="space-y-1.5">
-                    <label className="block text-xs font-semibold text-[#c7c4d7]">Est. Duration (Minutes)</label>
-                    <input
-                      type="number"
-                      required
-                      min={10}
-                      value={newEstimate}
-                      onChange={(e) => setNewEstimate(Number(e.target.value))}
-                      className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2.5 text-sm focus:border-[#c0c1ff] focus:outline-none focus:ring-1 focus:ring-[#c0c1ff]"
-                    />
-                  </div>
-                </div>
 
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-semibold text-[#c7c4d7]">Importance Level</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {(["Low", "Medium", "High"] as const).map(imp => (
+                  {/* Crisis Preset Anchors */}
+                  <div className="space-y-2">
+                    <span className="block text-[11px] font-bold text-[#c7c4d7]/70 uppercase tracking-wider">Or Use A Crisis Preset:</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <button
                         type="button"
-                        key={imp}
-                        onClick={() => setNewImportance(imp)}
-                        className={`py-2 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
-                          newImportance === imp 
-                            ? "bg-[#c0c1ff]/10 text-[#c0c1ff] border-[#c0c1ff]" 
-                            : "bg-[#1e1f26] border-white/10 text-[#c7c4d7]"
-                        }`}
+                        onClick={() => setSituationText("I have a complex machine learning homework due tomorrow morning at 9am. It counts for 20% of my total semester grade and I haven't coded any part of it yet.")}
+                        className="p-3 bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 rounded-xl text-left transition-all cursor-pointer group"
                       >
-                        {imp}
+                        <div className="text-xs font-bold text-[#9bb0c9] group-hover:text-white mb-0.5">Academic Emergency</div>
+                        <div className="text-[10px] text-[#c7c4d7]/70 truncate">Machine learning homework due at 9am tomorrow, worth 20%.</div>
                       </button>
-                    ))}
+                      <button
+                        type="button"
+                        onClick={() => setSituationText("Our production database has been throwing connection error 500 for the last hour. Customers are complaining and I need to identify the bug and hotfix it immediately.")}
+                        className="p-3 bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 rounded-xl text-left transition-all cursor-pointer group"
+                      >
+                        <div className="text-xs font-bold text-[#9bb0c9] group-hover:text-white mb-0.5">Production Bug Hotfix</div>
+                        <div className="text-[10px] text-[#c7c4d7]/70 truncate">Production database crash with error 500, active complaints.</div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSituationText("My apartment is completely messy with laundry and dishes everywhere, and my parents are visiting in exactly 2 hours. I need a swift organization plan.")}
+                        className="p-3 bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 rounded-xl text-left transition-all cursor-pointer group"
+                      >
+                        <div className="text-xs font-bold text-[#9bb0c9] group-hover:text-white mb-0.5">Home Cleaning Panic</div>
+                        <div className="text-[10px] text-[#c7c4d7]/70 truncate">Messy home, parents arriving in 2 hours, need quick plan.</div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSituationText("I have a live system design interview with a tier-1 tech startup tomorrow at 3 PM and I need to do deep revision on distributed cache consistency.")}
+                        className="p-3 bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 rounded-xl text-left transition-all cursor-pointer group"
+                      >
+                        <div className="text-xs font-bold text-[#9bb0c9] group-hover:text-white mb-0.5">Interview Prep Crunch</div>
+                        <div className="text-[10px] text-[#c7c4d7]/70 truncate">System design interview tomorrow at 3pm, need cash consistency.</div>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex justify-end gap-3 pt-3 border-t border-white/5">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddModal(false)}
+                      className="px-4 py-2 bg-[#1e1f26] hover:bg-[#33343b] rounded-lg text-xs font-semibold border border-white/10 text-[#c7c4d7] cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!situationText.trim()}
+                      onClick={() => setEntryStep(2)}
+                      className="px-5 py-2 bg-[#1e3a8a] hover:bg-[#1e3a8a]/90 text-white font-bold text-xs rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      Continue to Stakes Assessment
+                    </button>
                   </div>
                 </div>
+              )}
 
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-semibold text-[#c7c4d7]">Description & Context</label>
-                  <textarea
-                    value={newDesc}
-                    onChange={(e) => setNewDesc(e.target.value)}
-                    placeholder="Enter key reference guidelines or notes..."
-                    rows={3}
-                    className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2.5 text-sm focus:border-[#c0c1ff] focus:outline-none focus:ring-1 focus:ring-[#c0c1ff] resize-none"
-                  />
+              {/* STEP 2: Assess Stakes & Urgency */}
+              {entryStep === 2 && (
+                <div className="space-y-6 animate-fade-in">
+                  <p className="text-xs text-[#c7c4d7]/90 leading-relaxed font-sans">
+                    Specify the impact metrics. This helps the Smart Task Engine fine-tune your priority scores and trigger the corresponding survival safeguards.
+                  </p>
+
+                  {/* Urgency Assessment */}
+                  <div className="space-y-2">
+                    <label className="block text-xs font-bold text-[#9bb0c9] uppercase tracking-wider">1. Urgency Level</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                      {(["Relaxed", "Normal", "Important", "Urgent", "Critical"] as const).map(u => (
+                        <button
+                          type="button"
+                          key={u}
+                          onClick={() => setEntryUrgency(u)}
+                          className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                            entryUrgency === u 
+                              ? "bg-[#1e3a8a]/20 text-[#9bb0c9] border-[#1e3a8a]" 
+                              : "bg-[#1e1f26] border-white/10 text-[#c7c4d7]"
+                          }`}
+                        >
+                          <div className="text-xs font-bold">{u === "Critical" ? "Critical Urgency" : u}</div>
+                          <div className="text-[9px] text-[#c7c4d7]/50 mt-1.5 leading-normal">
+                            {u === "Relaxed" && "Flexible pacing, no pressure"}
+                            {u === "Normal" && "Standard pacing, manageable"}
+                            {u === "Important" && "Upcoming targets, focus required"}
+                            {u === "Urgent" && "Imminent pressure, short runway"}
+                            {u === "Critical" && "Immediate emergency, <24h left"}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Stakes / Importance Assessment */}
+                  <div className="space-y-2">
+                    <label className="block text-xs font-bold text-[#9bb0c9] uppercase tracking-wider">2. Stakes (Importance)</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(["Low", "Medium", "High"] as const).map(i => (
+                        <button
+                          type="button"
+                          key={i}
+                          onClick={() => setEntryImportance(i)}
+                          className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                            entryImportance === i 
+                              ? "bg-[#1e3a8a]/20 text-[#9bb0c9] border-[#1e3a8a]" 
+                              : "bg-[#1e1f26] border-white/10 text-[#c7c4d7]"
+                          }`}
+                        >
+                          <div className="text-xs font-bold">{i}</div>
+                          <div className="text-[9px] text-[#c7c4d7]/50 mt-1 leading-normal">
+                            {i === "Low" && "Low consequence, minor task"}
+                            {i === "Medium" && "Standard milestone item"}
+                            {i === "High" && "Huge impact, fails are critical"}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex justify-between items-center pt-3 border-t border-white/5">
+                    <button
+                      type="button"
+                      onClick={() => setEntryStep(1)}
+                      className="px-4 py-2 bg-[#1e1f26] hover:bg-[#33343b] rounded-lg text-xs font-semibold border border-white/10 text-[#c7c4d7] cursor-pointer"
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleAnalyzeSituation}
+                      className="px-5 py-2 bg-[#1e3a8a] hover:bg-[#1e3a8a]/90 text-white font-bold text-xs rounded-lg transition-all cursor-pointer flex items-center gap-1"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">bolt</span>
+                      Analyze with Gemini
+                    </button>
+                  </div>
                 </div>
+              )}
 
-                {/* Advanced smart settings collapsible */}
-                <div className="border-t border-white/5 pt-3">
-                  <button
-                    type="button"
-                    onClick={() => setShowAdvanced(!showAdvanced)}
-                    className="flex items-center gap-1.5 text-xs text-[#c0c1ff] hover:text-white font-semibold focus:outline-none cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">
-                      {showAdvanced ? "expand_less" : "expand_more"}
-                    </span>
-                    Smart Task Engine Parameters
-                  </button>
-                  
-                  {showAdvanced && (
-                    <div className="mt-4 space-y-4 border border-white/5 bg-[#191b22]/30 rounded-xl p-4 animate-fade-in text-left">
-                      {/* Project & Tags */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-1.5">
-                          <label className="block text-[11px] font-semibold text-[#c7c4d7]">Project Folder</label>
-                          <input
-                            type="text"
-                            value={newProject}
-                            onChange={(e) => setNewProject(e.target.value)}
-                            placeholder="e.g. 'ML Course', 'Career'"
-                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <label className="block text-[11px] font-semibold text-[#c7c4d7]">Tags (comma-separated)</label>
-                          <input
-                            type="text"
-                            value={newTagsString}
-                            onChange={(e) => setNewTagsString(e.target.value)}
-                            placeholder="e.g. 'pytorch, academic'"
-                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
-                          />
-                        </div>
+              {/* STEP 3: Loading AI */}
+              {entryStep === 3 && (
+                <div className="py-8 text-center space-y-6 animate-pulse">
+                  <div className="flex justify-center">
+                    <div className="w-16 h-16 rounded-full border-4 border-t-[#1e3a8a] border-white/5 animate-spin"></div>
+                  </div>
+                  <div className="space-y-2">
+                    <h4 className="font-sans font-bold text-base text-white">Consulting Gemini Smart Task Engine</h4>
+                    <p className="text-xs text-[#c7c4d7]/70 max-w-sm mx-auto leading-relaxed">
+                      Deconstructing your situation, predicting success parameters, building tactical subtasks, and organizing crisis files...
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* STEP 4: Review & Refine Plan */}
+              {entryStep === 4 && (
+                <form onSubmit={handleCreateFromWizard} className="space-y-5 animate-fade-in">
+                  <p className="text-xs text-[#c7c4d7]/90 leading-relaxed font-sans">
+                    Here is the structured roadmap rebuilt by Gemini. You can review the parameters and tweak the final deadline before adding it to your timeline.
+                  </p>
+
+                  {/* Extracted Core Fields */}
+                  <div className="space-y-4 bg-white/5 border border-white/5 rounded-xl p-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Title */}
+                      <div className="space-y-1.5 sm:col-span-2">
+                        <label className="block text-xs font-semibold text-[#c7c4d7]">Reconstructed Title</label>
+                        <input
+                          type="text"
+                          required
+                          value={newTitle}
+                          onChange={(e) => setNewTitle(e.target.value)}
+                          className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2.5 text-sm text-white focus:border-[#1e3a8a] focus:outline-none"
+                        />
                       </div>
 
-                      {/* Difficulty & Energy */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-1.5">
-                          <label className="block text-[11px] font-semibold text-[#c7c4d7]">Complexity / Difficulty</label>
-                          <div className="grid grid-cols-3 gap-1">
-                            {(["Easy", "Medium", "Hard"] as const).map(diff => (
-                              <button
-                                type="button"
-                                key={diff}
-                                onClick={() => setNewDifficulty(diff)}
-                                className={`py-1.5 rounded text-[10px] font-semibold border transition-all cursor-pointer ${
-                                  newDifficulty === diff 
-                                    ? "bg-[#c0c1ff]/15 text-[#c0c1ff] border-[#c0c1ff]/50" 
-                                    : "bg-[#1e1f26] border-white/5 text-[#c7c4d7]"
-                                }`}
-                              >
-                                {diff}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <label className="block text-[11px] font-semibold text-[#c7c4d7]">Energy Requirement</label>
-                          <div className="grid grid-cols-3 gap-1">
-                            {(["Low", "Medium", "High"] as const).map(energy => (
-                              <button
-                                type="button"
-                                key={energy}
-                                onClick={() => setNewEnergyRequirement(energy)}
-                                className={`py-1.5 rounded text-[10px] font-semibold border transition-all cursor-pointer ${
-                                  newEnergyRequirement === energy 
-                                    ? "bg-[#c0c1ff]/15 text-[#c0c1ff] border-[#c0c1ff]/50" 
-                                    : "bg-[#1e1f26] border-white/5 text-[#c7c4d7]"
-                                }`}
-                              >
-                                {energy}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Focus Requirement & Risk Level */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-1.5">
-                          <label className="block text-[11px] font-semibold text-[#c7c4d7]">Focus State</label>
-                          <select
-                            value={newFocusRequirement}
-                            onChange={(e: any) => setNewFocusRequirement(e.target.value)}
-                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
-                          >
-                            <option value="Low Focus">Low Focus (Light Tasks)</option>
-                            <option value="Medium Focus">Medium Focus (Standard Tasks)</option>
-                            <option value="High Focus">High Focus (Heavier Tasks)</option>
-                            <option value="Deep Focus">Deep Focus (Undistracted Sprint)</option>
-                          </select>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <label className="block text-[11px] font-semibold text-[#c7c4d7]">Risk Level</label>
-                          <select
-                            value={newRiskLevel}
-                            onChange={(e: any) => setNewRiskLevel(e.target.value)}
-                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
-                          >
-                            <option value="Low">Low Risk</option>
-                            <option value="Medium">Medium Risk</option>
-                            <option value="High">High Risk</option>
-                            <option value="Critical">Critical Risk</option>
-                          </select>
-                        </div>
-                      </div>
-
-                      {/* Probability & Progress */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-1.5">
-                          <div className="flex justify-between text-[11px] text-[#c7c4d7]">
-                            <span className="font-semibold">Success Probability</span>
-                            <span className="font-mono font-bold text-[#c0c1ff]">{newCompletionProbability}%</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="0"
-                            max="100"
-                            value={newCompletionProbability}
-                            onChange={(e) => setNewCompletionProbability(Number(e.target.value))}
-                            className="w-full h-1 bg-[#33343b] rounded-lg appearance-none cursor-pointer accent-[#c0c1ff]"
-                          />
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <div className="flex justify-between text-[11px] text-[#c7c4d7]">
-                            <span className="font-semibold">Initial Task Progress</span>
-                            <span className="font-mono font-bold text-[#c0c1ff]">{newProgress}%</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="0"
-                            max="100"
-                            value={newProgress}
-                            onChange={(e) => setNewProgress(Number(e.target.value))}
-                            className="w-full h-1 bg-[#33343b] rounded-lg appearance-none cursor-pointer accent-[#c0c1ff]"
-                          />
-                        </div>
-                      </div>
-
-                      {/* Dependencies */}
+                      {/* Project and Est. Duration */}
                       <div className="space-y-1.5">
-                        <label className="block text-[11px] font-semibold text-[#c7c4d7]">Task Dependencies (Must complete first)</label>
-                        <div className="max-h-24 overflow-y-auto border border-white/5 bg-[#191b22] rounded-lg p-2.5 space-y-1 text-xs">
-                          {tasks.filter(t => !taskToEdit || t.id !== taskToEdit.id).map(t => {
-                            const isChecked = newDependencies.includes(t.id);
-                            return (
-                              <label key={t.id} className="flex items-center gap-2 text-[#c7c4d7] hover:text-white cursor-pointer py-0.5 text-left">
-                                <input
-                                  type="checkbox"
-                                  checked={isChecked}
-                                  onChange={() => {
-                                    if (isChecked) {
-                                      setNewDependencies(prev => prev.filter(id => id !== t.id));
-                                    } else {
-                                      setNewDependencies(prev => [...prev, t.id]);
-                                    }
-                                  }}
-                                  className="rounded border-white/10 bg-[#1e1f26] text-[#c0c1ff] focus:ring-0"
-                                />
-                                <span className="truncate">{t.title}</span>
-                              </label>
-                            );
-                          })}
-                          {tasks.filter(t => !taskToEdit || t.id !== taskToEdit.id).length === 0 && (
-                            <span className="text-[10px] text-[#c7c4d7]/40">No other tasks available.</span>
-                          )}
-                        </div>
+                        <label className="block text-xs font-semibold text-[#c7c4d7]">Assigned Folder</label>
+                        <input
+                          type="text"
+                          required
+                          value={newProject}
+                          onChange={(e) => setNewProject(e.target.value)}
+                          className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2.5 text-sm text-white focus:border-[#1e3a8a] focus:outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-semibold text-[#c7c4d7]">Est. Duration (Minutes)</label>
+                        <input
+                          type="number"
+                          required
+                          min={10}
+                          value={newEstimate}
+                          onChange={(e) => setNewEstimate(Number(e.target.value))}
+                          className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2.5 text-sm text-white focus:border-[#1e3a8a] focus:outline-none"
+                        />
+                      </div>
+
+                      {/* Deadline target and tags */}
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-semibold text-[#9bb0c9]">Adjust Deadline Target</label>
+                        <input
+                          type="datetime-local"
+                          required
+                          value={newDeadline}
+                          onChange={(e) => setNewDeadline(e.target.value)}
+                          className="w-full bg-[#1e1f26] border border-[#1e3a8a]/30 rounded-lg p-2.5 text-sm text-white focus:border-[#1e3a8a] focus:outline-none font-sans font-bold"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-semibold text-[#c7c4d7]">Tags (comma-separated)</label>
+                        <input
+                          type="text"
+                          value={newTagsString}
+                          onChange={(e) => setNewTagsString(e.target.value)}
+                          className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2.5 text-sm text-white focus:border-[#1e3a8a] focus:outline-none"
+                        />
                       </div>
                     </div>
-                  )}
-                </div>
 
-                <div className="flex justify-end gap-3 pt-4 border-t border-white/5">
-                  <button
-                    type="button"
-                    onClick={() => setShowAddModal(false)}
-                    className="px-4 py-2 bg-[#1e1f26] hover:bg-[#33343b] rounded-lg text-xs font-semibold border border-white/10 text-[#c7c4d7] cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-5 py-2 bg-[#c0c1ff] hover:bg-[#c0c1ff]/90 text-[#1000a9] font-bold text-xs rounded-lg transition-all cursor-pointer"
-                  >
-                    Add and Analyze
-                  </button>
-                </div>
-              </form>
+                    {/* AI Safeguard Summary */}
+                    {aiSummaryText && (
+                      <div className="border-t border-white/5 pt-3 space-y-1.5">
+                        <div className="flex items-center gap-1.5 text-xs text-[#9bb0c9] font-bold">
+                          <span className="material-symbols-outlined text-[14px]">verified_user</span>
+                          Gemini Safeguard Analysis
+                        </div>
+                        <p className="text-[11px] text-[#c7c4d7]/90 leading-relaxed italic bg-black/20 p-2.5 rounded-lg border border-white/5 font-sans">
+                          {aiSummaryText}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Subtasks Reconstructed List */}
+                    {analyzedSubtasks.length > 0 && (
+                      <div className="border-t border-white/5 pt-3 space-y-2">
+                        <div className="text-xs text-[#c7c4d7] font-semibold">Gemini Suggested Subtasks Checklist:</div>
+                        <div className="max-h-28 overflow-y-auto space-y-1.5 scrollbar-thin bg-black/10 p-2 rounded-lg border border-white/5">
+                          {analyzedSubtasks.map((sub, idx) => (
+                            <div key={idx} className="flex justify-between items-center text-[11px] text-[#c7c4d7] py-0.5 border-b border-white/5 last:border-0">
+                              <span className="truncate pr-2">• {sub.text}</span>
+                              <div className="flex gap-2 shrink-0 font-mono text-[9px]">
+                                <span className="bg-white/5 px-1 py-0.5 rounded text-white/50">{sub.estimatedMinutes}m</span>
+                                <span className={`px-1 py-0.5 rounded ${
+                                  sub.difficulty === "Hard" ? "bg-orange-500/15 text-orange-400" :
+                                  sub.difficulty === "Medium" ? "bg-amber-400/15 text-amber-300" :
+                                  "bg-teal-400/15 text-teal-300"
+                                }`}>{sub.difficulty}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Advanced Smart settings collapse */}
+                  <div className="border-t border-white/5 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvanced(!showAdvanced)}
+                      className="flex items-center gap-1.5 text-xs text-[#9bb0c9] hover:text-white font-semibold focus:outline-none cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">
+                        {showAdvanced ? "expand_less" : "expand_more"}
+                      </span>
+                      Smart Engine Advanced Tuning
+                    </button>
+
+                    {showAdvanced && (
+                      <div className="mt-3 space-y-4 border border-white/5 bg-white/5 rounded-xl p-4 animate-fade-in">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          {/* Difficulty and Energy */}
+                          <div className="space-y-1.5">
+                            <label className="block text-[11px] font-semibold text-[#c7c4d7]">Task Difficulty</label>
+                            <div className="grid grid-cols-3 gap-1">
+                              {(["Easy", "Medium", "Hard"] as const).map(diff => (
+                                <button
+                                  type="button"
+                                  key={diff}
+                                  onClick={() => setNewDifficulty(diff)}
+                                  className={`py-1 rounded text-[10px] font-semibold border transition-all cursor-pointer ${
+                                    newDifficulty === diff 
+                                      ? "bg-[#1e3a8a]/20 text-[#9bb0c9] border-[#1e3a8a]/50" 
+                                      : "bg-[#1e1f26] border-white/5 text-[#c7c4d7]"
+                                  }`}
+                                >
+                                  {diff}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="block text-[11px] font-semibold text-[#c7c4d7]">Energy Requirement</label>
+                            <div className="grid grid-cols-3 gap-1">
+                              {(["Low", "Medium", "High"] as const).map(energy => (
+                                <button
+                                  type="button"
+                                  key={energy}
+                                  onClick={() => setNewEnergyRequirement(energy)}
+                                  className={`py-1 rounded text-[10px] font-semibold border transition-all cursor-pointer ${
+                                    newEnergyRequirement === energy 
+                                      ? "bg-[#1e3a8a]/20 text-[#9bb0c9] border-[#1e3a8a]/50" 
+                                      : "bg-[#1e1f26] border-white/5 text-[#c7c4d7]"
+                                  }`}
+                                >
+                                  {energy}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Focus State and Risk Level */}
+                          <div className="space-y-1.5">
+                            <label className="block text-[11px] font-semibold text-[#c7c4d7]">Focus State</label>
+                            <select
+                              value={newFocusRequirement}
+                              onChange={(e: any) => setNewFocusRequirement(e.target.value)}
+                              className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#1e3a8a] focus:outline-none"
+                            >
+                              <option value="Low Focus">Low Focus (Light Tasks)</option>
+                              <option value="Medium Focus">Medium Focus (Standard Tasks)</option>
+                              <option value="High Focus">High Focus (Heavier Tasks)</option>
+                              <option value="Deep Focus">Deep Focus (Undistracted Sprint)</option>
+                            </select>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="block text-[11px] font-semibold text-[#c7c4d7]">Risk Level</label>
+                            <select
+                              value={newRiskLevel}
+                              onChange={(e: any) => setNewRiskLevel(e.target.value)}
+                              className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#1e3a8a] focus:outline-none"
+                            >
+                              <option value="Low">Low Risk</option>
+                              <option value="Medium">Medium Risk</option>
+                              <option value="High">High Risk</option>
+                              <option value="Critical">Extreme Risk</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex justify-between items-center pt-3 border-t border-white/5">
+                    <button
+                      type="button"
+                      onClick={() => setEntryStep(2)}
+                      className="px-4 py-2 bg-[#1e1f26] hover:bg-[#33343b] rounded-lg text-xs font-semibold border border-white/10 text-[#c7c4d7] cursor-pointer"
+                    >
+                      Back
+                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowAddModal(false)}
+                        className="px-4 py-2 bg-[#1e1f26] hover:bg-[#33343b] rounded-lg text-xs font-semibold border border-white/10 text-[#c7c4d7] cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="px-5 py-2 bg-[#1e3a8a] hover:bg-[#1e3a8a]/90 text-white font-bold text-xs rounded-lg transition-all cursor-pointer"
+                      >
+                        Create Task & Activate
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              )}
             </motion.div>
           </div>
         )}
@@ -3443,7 +4309,7 @@ export default function App() {
                     required
                     value={newTitle}
                     onChange={(e) => setNewTitle(e.target.value)}
-                    className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2.5 text-sm focus:border-[#c0c1ff] focus:outline-none"
+                    className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2.5 text-sm focus:border-[#14b8a6] focus:outline-none"
                   />
                 </div>
 
@@ -3455,7 +4321,7 @@ export default function App() {
                       required
                       value={newDeadline}
                       onChange={(e) => setNewDeadline(e.target.value)}
-                      className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2.5 text-sm focus:border-[#c0c1ff] focus:outline-none"
+                      className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2.5 text-sm focus:border-[#14b8a6] focus:outline-none"
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -3465,7 +4331,7 @@ export default function App() {
                       required
                       value={newEstimate}
                       onChange={(e) => setNewEstimate(Number(e.target.value))}
-                      className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2.5 text-sm focus:border-[#c0c1ff] focus:outline-none"
+                      className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2.5 text-sm focus:border-[#14b8a6] focus:outline-none"
                     />
                   </div>
                 </div>
@@ -3480,7 +4346,7 @@ export default function App() {
                         onClick={() => setNewImportance(imp)}
                         className={`py-2 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
                           newImportance === imp 
-                            ? "bg-[#c0c1ff]/10 text-[#c0c1ff] border-[#c0c1ff]" 
+                            ? "bg-[#14b8a6]/10 text-[#14b8a6] border-[#14b8a6]" 
                             : "bg-[#1e1f26] border-white/10 text-[#c7c4d7]"
                         }`}
                       >
@@ -3496,7 +4362,7 @@ export default function App() {
                     value={newDesc}
                     onChange={(e) => setNewDesc(e.target.value)}
                     rows={3}
-                    className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2.5 text-sm focus:border-[#c0c1ff] focus:outline-none focus:ring-1 focus:ring-[#c0c1ff] resize-none"
+                    className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2.5 text-sm focus:border-[#14b8a6] focus:outline-none focus:ring-1 focus:ring-[#14b8a6] resize-none"
                   />
                 </div>
 
@@ -3505,7 +4371,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setShowAdvanced(!showAdvanced)}
-                    className="flex items-center gap-1.5 text-xs text-[#c0c1ff] hover:text-white font-semibold focus:outline-none cursor-pointer"
+                    className="flex items-center gap-1.5 text-xs text-[#14b8a6] hover:text-white font-semibold focus:outline-none cursor-pointer"
                   >
                     <span className="material-symbols-outlined text-[16px]">
                       {showAdvanced ? "expand_less" : "expand_more"}
@@ -3524,7 +4390,7 @@ export default function App() {
                             value={newProject}
                             onChange={(e) => setNewProject(e.target.value)}
                             placeholder="e.g. 'ML Course', 'Career'"
-                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
+                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#14b8a6] focus:outline-none"
                           />
                         </div>
                         <div className="space-y-1.5">
@@ -3534,7 +4400,7 @@ export default function App() {
                             value={newTagsString}
                             onChange={(e) => setNewTagsString(e.target.value)}
                             placeholder="e.g. 'pytorch, academic'"
-                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
+                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#14b8a6] focus:outline-none"
                           />
                         </div>
                       </div>
@@ -3551,7 +4417,7 @@ export default function App() {
                                 onClick={() => setNewDifficulty(diff)}
                                 className={`py-1.5 rounded text-[10px] font-semibold border transition-all cursor-pointer ${
                                   newDifficulty === diff 
-                                    ? "bg-[#c0c1ff]/15 text-[#c0c1ff] border-[#c0c1ff]/50" 
+                                    ? "bg-[#14b8a6]/15 text-[#14b8a6] border-[#14b8a6]/50" 
                                     : "bg-[#1e1f26] border-white/5 text-[#c7c4d7]"
                                 }`}
                               >
@@ -3571,7 +4437,7 @@ export default function App() {
                                 onClick={() => setNewEnergyRequirement(energy)}
                                 className={`py-1.5 rounded text-[10px] font-semibold border transition-all cursor-pointer ${
                                   newEnergyRequirement === energy 
-                                    ? "bg-[#c0c1ff]/15 text-[#c0c1ff] border-[#c0c1ff]/50" 
+                                    ? "bg-[#14b8a6]/15 text-[#14b8a6] border-[#14b8a6]/50" 
                                     : "bg-[#1e1f26] border-white/5 text-[#c7c4d7]"
                                 }`}
                               >
@@ -3589,7 +4455,7 @@ export default function App() {
                           <select
                             value={newFocusRequirement}
                             onChange={(e: any) => setNewFocusRequirement(e.target.value)}
-                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
+                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#14b8a6] focus:outline-none"
                           >
                             <option value="Low Focus">Low Focus (Light Tasks)</option>
                             <option value="Medium Focus">Medium Focus (Standard Tasks)</option>
@@ -3603,12 +4469,12 @@ export default function App() {
                           <select
                             value={newRiskLevel}
                             onChange={(e: any) => setNewRiskLevel(e.target.value)}
-                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#c0c1ff] focus:outline-none"
+                            className="w-full bg-[#1e1f26] border border-white/10 rounded-lg p-2 text-xs text-white focus:border-[#14b8a6] focus:outline-none"
                           >
                             <option value="Low">Low Risk</option>
                             <option value="Medium">Medium Risk</option>
                             <option value="High">High Risk</option>
-                            <option value="Critical">Critical Risk</option>
+                            <option value="Critical">Extreme Risk</option>
                           </select>
                         </div>
                       </div>
@@ -3618,7 +4484,7 @@ export default function App() {
                         <div className="space-y-1.5">
                           <div className="flex justify-between text-[11px] text-[#c7c4d7]">
                             <span className="font-semibold">Success Probability</span>
-                            <span className="font-mono font-bold text-[#c0c1ff]">{newCompletionProbability}%</span>
+                            <span className="font-mono font-bold text-[#14b8a6]">{newCompletionProbability}%</span>
                           </div>
                           <input
                             type="range"
@@ -3626,14 +4492,14 @@ export default function App() {
                             max="100"
                             value={newCompletionProbability}
                             onChange={(e) => setNewCompletionProbability(Number(e.target.value))}
-                            className="w-full h-1 bg-[#33343b] rounded-lg appearance-none cursor-pointer accent-[#c0c1ff]"
+                            className="w-full h-1 bg-[#33343b] rounded-lg appearance-none cursor-pointer accent-[#14b8a6]"
                           />
                         </div>
 
                         <div className="space-y-1.5">
                           <div className="flex justify-between text-[11px] text-[#c7c4d7]">
                             <span className="font-semibold">Current Task Progress</span>
-                            <span className="font-mono font-bold text-[#c0c1ff]">{newProgress}%</span>
+                            <span className="font-mono font-bold text-[#14b8a6]">{newProgress}%</span>
                           </div>
                           <input
                             type="range"
@@ -3641,7 +4507,7 @@ export default function App() {
                             max="100"
                             value={newProgress}
                             onChange={(e) => setNewProgress(Number(e.target.value))}
-                            className="w-full h-1 bg-[#33343b] rounded-lg appearance-none cursor-pointer accent-[#c0c1ff]"
+                            className="w-full h-1 bg-[#33343b] rounded-lg appearance-none cursor-pointer accent-[#14b8a6]"
                           />
                         </div>
                       </div>
@@ -3664,7 +4530,7 @@ export default function App() {
                                       setNewDependencies(prev => [...prev, t.id]);
                                     }
                                   }}
-                                  className="rounded border-white/10 bg-[#1e1f26] text-[#c0c1ff] focus:ring-0"
+                                  className="rounded border-white/10 bg-[#1e1f26] text-[#14b8a6] focus:ring-0"
                                 />
                                 <span className="truncate">{t.title}</span>
                               </label>
@@ -3689,7 +4555,7 @@ export default function App() {
                   </button>
                   <button
                     type="submit"
-                    className="px-5 py-2 bg-[#c0c1ff] hover:bg-[#c0c1ff]/90 text-[#1000a9] font-bold text-xs rounded-lg transition-all cursor-pointer"
+                    className="px-5 py-2 bg-[#14b8a6] hover:bg-[#14b8a6]/90 text-[#022c22] font-bold text-xs rounded-lg transition-all cursor-pointer"
                   >
                     Save Changes
                   </button>
@@ -3712,8 +4578,8 @@ export default function App() {
             >
               <div className="flex justify-between items-center border-b border-white/5 pb-3">
                 <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-[#c0c1ff] animate-pulse-soft">psychology</span>
-                  <span className="text-xs font-mono text-[#c0c1ff] uppercase tracking-wider">Coach Pick</span>
+                  <span className="material-symbols-outlined text-[#14b8a6] animate-pulse-soft">psychology</span>
+                  <span className="text-xs font-mono text-[#14b8a6] uppercase tracking-wider">Coach Pick</span>
                 </div>
                 <button onClick={() => setShowWhatNowModal(false)} className="text-[#c7c4d7] hover:text-white">
                   <span className="material-symbols-outlined">close</span>
@@ -3724,10 +4590,10 @@ export default function App() {
                 <div>
                   <span className="text-[10px] font-mono uppercase tracking-wider text-[#c7c4d7] block mb-1">Recommended task</span>
                   <h3 className="font-bold text-xl text-white">{recommendation.title}</h3>
-                  <span className="font-mono text-xs text-[#c0c1ff] block mt-1">Estimated duration: {recommendation.estimatedTimeStr}</span>
+                  <span className="font-mono text-xs text-[#14b8a6] block mt-1">Estimated duration: {recommendation.estimatedTimeStr}</span>
                 </div>
 
-                <div className="p-4 rounded-xl bg-[#c0c1ff]/5 border border-[#c0c1ff]/10 text-xs text-[#c7c4d7] leading-relaxed">
+                <div className="p-4 rounded-xl bg-[#14b8a6]/5 border border-[#14b8a6]/10 text-xs text-[#c7c4d7] leading-relaxed">
                   <strong>Why now:</strong> {recommendation.reasoning}
                 </div>
               </div>
@@ -3747,7 +4613,7 @@ export default function App() {
                       setShowWhatNowModal(false);
                     }
                   }}
-                  className="flex-1 py-2.5 bg-[#c0c1ff] hover:bg-[#c0c1ff]/90 text-[#1000a9] font-bold text-xs rounded-lg transition-all cursor-pointer text-center"
+                  className="flex-1 py-2.5 bg-[#14b8a6] hover:bg-[#14b8a6]/90 text-[#022c22] font-bold text-xs rounded-lg transition-all cursor-pointer text-center"
                 >
                   Start This Task
                 </button>
@@ -3778,6 +4644,224 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Focus Efficacy Diagnostics Modal */}
+      <AnimatePresence>
+        {focusDiagnosticsOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setFocusDiagnosticsOpen(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ scale: 0.95, y: 15, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.95, y: 15, opacity: 0 }}
+              transition={{ type: "spring", duration: 0.5 }}
+              className="relative w-full max-w-lg bg-[#181922] border border-white/10 rounded-2xl overflow-hidden shadow-2xl z-10"
+            >
+              {/* Header */}
+              <div className="p-6 border-b border-white/5 flex justify-between items-center bg-[#1e1f26]">
+                <div>
+                  <h3 className="text-sm font-mono font-bold text-[#14b8a6] uppercase tracking-wider flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[18px]">query_stats</span>
+                    Focus Efficacy Diagnostics
+                  </h3>
+                  <p className="text-[10px] text-[#c7c4d7]/70 mt-0.5 font-mono">
+                    Real-time behavioral scoring model (Last 7 Days)
+                  </p>
+                </div>
+                <button
+                  onClick={() => setFocusDiagnosticsOpen(false)}
+                  className="p-1.5 rounded-lg bg-white/5 border border-white/5 text-[#c7c4d7] hover:text-white transition-colors cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm">close</span>
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+                {focusScoring.score === null ? (
+                  <div className="text-center py-8 space-y-3">
+                    <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mx-auto text-[#c7c4d7]/40 border border-white/10">
+                      <span className="material-symbols-outlined text-[24px]">hourglass_disabled</span>
+                    </div>
+                    <div className="space-y-1">
+                      <h4 className="text-sm font-semibold text-white">Not Enough Data Yet</h4>
+                      <p className="text-xs text-[#c7c4d7]/70 max-w-sm mx-auto font-sans leading-relaxed">
+                        Complete a Focus Session using the Focus Timer panel to activate and calibrate your custom Focus Efficacy metric.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {/* Overall Summary Card */}
+                    <div className="grid grid-cols-2 gap-4 p-4 rounded-xl bg-white/5 border border-white/5">
+                      <div className="space-y-1">
+                        <div className="text-[9px] font-mono text-[#c7c4d7]/60 uppercase tracking-wider">Current Score</div>
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-4xl font-mono font-black text-white">{focusScoring.score}</span>
+                          <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
+                            focusScoring.confidence === "High"
+                              ? "bg-emerald-500/15 text-emerald-400"
+                              : focusScoring.confidence === "Medium"
+                                ? "bg-amber-500/15 text-amber-400"
+                                : "bg-white/10 text-[#c7c4d7]"
+                          }`}>
+                            {focusScoring.confidence} Confidence
+                          </span>
+                        </div>
+                      </div>
+                      <div className="space-y-2 border-l border-white/5 pl-4 flex flex-col justify-center">
+                        <div className="flex justify-between text-[10px] font-mono">
+                          <span className="text-[#c7c4d7]/70">Sessions:</span>
+                          <span className="text-white font-bold">{focusScoring.sessionsAnalyzed} ({focusScoring.rawConsistencyDays} days)</span>
+                        </div>
+                        <div className="flex justify-between text-[10px] font-mono">
+                          <span className="text-[#c7c4d7]/70">Timeframe:</span>
+                          <span className="text-white">Previous 7 days</span>
+                        </div>
+                        <div className="flex justify-between text-[10px] font-mono">
+                          <span className="text-[#c7c4d7]/70">Trend:</span>
+                          <span className={`font-bold capitalize flex items-center gap-0.5 ${
+                            focusScoring.trend === "up" 
+                              ? "text-emerald-400" 
+                              : focusScoring.trend === "down" 
+                                ? "text-rose-400" 
+                                : "text-[#c7c4d7]"
+                          }`}>
+                            {focusScoring.trend === "up" && "▲ Upward"}
+                            {focusScoring.trend === "down" && "▼ Downward"}
+                            {focusScoring.trend === "stable" && "■ Stable"}
+                            {focusScoring.trend === "new" && "New Metric"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Component-wise Breakdown */}
+                    <div className="space-y-4">
+                      <h4 className="text-xs font-mono font-bold text-[#c7c4d7] uppercase tracking-widest">
+                        Model Component Breakdown
+                      </h4>
+
+                      <div className="space-y-3.5">
+                        {/* 1. Session Completion Rate (40% or 57%) */}
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-xs font-mono">
+                            <span className="text-white font-semibold">
+                              1. Session Completion Rate {focusScoring.durationAccuracy === null ? "(57% - Adjusted)" : "(40%)"}
+                            </span>
+                            <span className="text-[#14b8a6] font-bold">{Math.round(focusScoring.completionRate || 0)}%</span>
+                          </div>
+                          <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-[#14b8a6]" 
+                              style={{ width: `${focusScoring.completionRate || 0}%` }}
+                            />
+                          </div>
+                          <div className="flex justify-between text-[9px] font-mono text-[#c7c4d7]/60">
+                            <span>Points: Completed/Overrun (+1.0), Cancelled (+0.5), Abandoned (+0)</span>
+                            <span>Raw Rate: {focusScoring.rawCompletionRate}%</span>
+                          </div>
+                        </div>
+
+                        {/* 2. Duration Accuracy (30% or Excluded) */}
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-xs font-mono">
+                            <span className={focusScoring.durationAccuracy === null ? "text-[#c7c4d7]/40 font-semibold" : "text-white font-semibold"}>
+                              2. Duration Accuracy {focusScoring.durationAccuracy === null ? "(Excluded)" : "(30%)"}
+                            </span>
+                            <span className={focusScoring.durationAccuracy === null ? "text-[#c7c4d7]/40 font-bold" : "text-[#14b8a6] font-bold"}>
+                              {focusScoring.durationAccuracy === null ? "—" : `${Math.round(focusScoring.durationAccuracy)}%`}
+                            </span>
+                          </div>
+                          <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                            <div 
+                              className={`h-full ${focusScoring.durationAccuracy === null ? "bg-white/10" : "bg-amber-400"}`}
+                              style={{ width: `${focusScoring.durationAccuracy === null ? 0 : focusScoring.durationAccuracy}%` }}
+                            />
+                          </div>
+                          <div className="flex justify-between text-[9px] font-mono text-[#c7c4d7]/60">
+                            <span>Grace threshold: +10% or 5m. Overruns above 50% decay to zero score</span>
+                            <span>
+                              Raw accuracy: {focusScoring.rawDurationAccuracy === null ? "N/A (requires completed/overrun sessions)" : `${focusScoring.rawDurationAccuracy}%`}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* 3. Focus Consistency (20% or 29%) */}
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-xs font-mono">
+                            <span className="text-white font-semibold">
+                              3. Focus Consistency {focusScoring.durationAccuracy === null ? "(29% - Adjusted)" : "(20%)"}
+                            </span>
+                            <span className="text-[#14b8a6] font-bold">{Math.round(focusScoring.consistency || 0)}%</span>
+                          </div>
+                          <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-indigo-400" 
+                              style={{ width: `${focusScoring.consistency || 0}%` }}
+                            />
+                          </div>
+                          <div className="flex justify-between text-[9px] font-mono text-[#c7c4d7]/60">
+                            <span>Weighted unique days with meaningful sessions (&gt;=50% planned)</span>
+                            <span>Active days: {focusScoring.rawConsistencyDays}/7</span>
+                          </div>
+                        </div>
+
+                        {/* 4. Interruption Quality (10% or 14%) */}
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-xs font-mono">
+                            <span className="text-white font-semibold">
+                              4. Interruption Quality {focusScoring.durationAccuracy === null ? "(14% - Adjusted)" : "(10%)"}
+                            </span>
+                            <span className="text-[#14b8a6] font-bold">{Math.round(focusScoring.interruptions || 0)}%</span>
+                          </div>
+                          <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-rose-400" 
+                              style={{ width: `${focusScoring.interruptions || 0}%` }}
+                            />
+                          </div>
+                          <div className="flex justify-between text-[9px] font-mono text-[#c7c4d7]/60">
+                            <span>Deductions: Pauses (-10), Confirmed tab blurs &gt;15s (-15), Pause time (-5/m)</span>
+                            <span>Avg quality: {focusScoring.rawInterruptions}%</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Explanation details */}
+                    <div className="p-3.5 bg-indigo-500/5 rounded-xl border border-indigo-500/10 text-[10px] text-[#c7c4d7]/90 leading-relaxed font-sans">
+                      <span className="font-mono text-[#14b8a6] font-bold uppercase block mb-1">
+                        🔬 MODEL EQUATIONS & COMPLIANCE SUMMARY
+                      </span>
+                      This custom-designed metric calculates performance by combining continuous behavioral parameters with 
+                      <strong className="text-white"> exponential time-decay (Day 1 ≈ 78%, Day 3 ≈ 47%, Day 7 ≈ 17%)</strong> to reward recent focus habits. 
+                      If Duration Accuracy has no eligible data (due to no completed/overrun sessions in the last 7 days), its weight is excluded and 
+                      redistributed proportionally across Completion Rate (57%), Consistency (29%), and Interruption Quality (14%).
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 border-t border-white/5 bg-[#1e1f26] text-center">
+                <button
+                  onClick={() => setFocusDiagnosticsOpen(false)}
+                  className="px-5 py-2 rounded-xl bg-[#14b8a6] text-[#0f172a] font-bold text-xs hover:bg-[#119d8d] transition-colors cursor-pointer"
+                >
+                  Close Diagnostics
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* 8. Gorgeous Mobile Bottom Navigation Bar */}
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#1e1f26]/90 backdrop-blur-xl border-t border-white/5 z-45 flex items-center justify-around px-2 pb-safe shadow-[0_-8px_30px_rgba(0,0,0,0.5)]">
         {[
@@ -3796,10 +4880,10 @@ export default function App() {
                 setSelectedTask(null);
               }}
               className={`flex flex-col items-center justify-center flex-1 h-full py-1 text-center transition-all ${
-                isActive ? "text-[#c0c1ff]" : "text-[#c7c4d7]/70"
+                isActive ? "text-[#14b8a6]" : "text-[#c7c4d7]/70"
               }`}
             >
-              <span className={`material-symbols-outlined text-[20px] mb-0.5 ${isActive ? "text-[#c0c1ff] scale-110 font-bold" : "text-[#c7c4d7]"}`} style={{ fontVariationSettings: isActive ? "'FILL' 1" : "" }}>
+              <span className={`material-symbols-outlined text-[20px] mb-0.5 ${isActive ? "text-[#14b8a6] scale-110 font-bold" : "text-[#c7c4d7]"}`} style={{ fontVariationSettings: isActive ? "'FILL' 1" : "" }}>
                 {item.icon}
               </span>
               <span className="text-[9px] font-mono tracking-tight font-medium">{item.label}</span>

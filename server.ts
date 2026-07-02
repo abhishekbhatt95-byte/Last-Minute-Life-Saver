@@ -326,8 +326,161 @@ function getDefaultTasks(): Task[] {
   ];
 }
 
-// In-memory Task Database (Pre-populated matching screenshots)
-let tasks: Task[] = getDefaultTasks();
+// Helper to calculate urgency based on deadline proximity with safe fallbacks
+function calculateDeadlineUrgency(
+  deadline: string | undefined | null,
+  importance: "Low" | "Medium" | "High"
+): "Relaxed" | "Normal" | "Important" | "Urgent" | "Critical" {
+  if (!deadline) {
+    if (importance === "High") return "Important";
+    if (importance === "Medium") return "Normal";
+    return "Relaxed";
+  }
+
+  try {
+    const deadlineDate = new Date(deadline);
+    if (isNaN(deadlineDate.getTime())) {
+      if (importance === "High") return "Important";
+      if (importance === "Medium") return "Normal";
+      return "Relaxed";
+    }
+
+    const now = new Date();
+    const diffMs = deadlineDate.getTime() - now.getTime();
+    const diffHours = diffMs / (1000 * 60 * 60);
+
+    if (diffHours < 0) {
+      return "Critical";
+    }
+    if (diffHours < 24) {
+      return "Critical";
+    }
+    if (diffHours < 24 * 3) {
+      return "Urgent";
+    }
+    if (diffHours < 24 * 7) {
+      return "Important";
+    }
+    if (diffHours < 24 * 14) {
+      return "Normal";
+    }
+    return "Relaxed";
+  } catch (e) {
+    if (importance === "High") return "Important";
+    if (importance === "Medium") return "Normal";
+    return "Relaxed";
+  }
+}
+
+// In-memory Task Database (Pre-populated matching screenshots and backfilled with calculated urgency)
+let tasks: Task[] = getDefaultTasks().map(t => ({
+  ...t,
+  urgency: calculateDeadlineUrgency(t.deadline, t.importance)
+}));
+
+// Shared function to recalculate urgency across all tasks dynamically
+function syncAllTasksUrgency(): void {
+  tasks = tasks.map(t => ({
+    ...t,
+    urgency: calculateDeadlineUrgency(t.deadline, t.importance)
+  }));
+}
+
+// Helper to simulate analysis of a situation when Gemini is unavailable
+function simulateAnalyzeSituation(situation: string, urgency: string, importance: string) {
+  const sitLower = situation.toLowerCase();
+  
+  let title = "Resolve Pending Crisis";
+  let description = "AI-reconstructed action plan for your described situation.";
+  let estimatedMinutes = 90;
+  let project = "Crisis Management";
+  let tags = ["urgent", "action-required"];
+  let difficulty: "Easy" | "Medium" | "Hard" = "Medium";
+  let focusRequirement: "Low Focus" | "Medium Focus" | "High Focus" | "Deep Focus" = "High Focus";
+  let energyRequirement: "Low" | "Medium" | "High" = "High";
+  let riskLevel: "Low" | "Medium" | "High" | "Critical" = "Medium";
+  let completionProbability = 75;
+  
+  if (sitLower.includes("assignment") || sitLower.includes("homework") || sitLower.includes("ml") || sitLower.includes("course") || sitLower.includes("class")) {
+    title = "Complete Course Assignment";
+    description = "Review material, write solutions/code, format, and prepare submission package.";
+    estimatedMinutes = 120;
+    project = "Academics";
+    tags = ["assignment", "study"];
+    difficulty = "Hard";
+    focusRequirement = "Deep Focus";
+    energyRequirement = "High";
+  } else if (sitLower.includes("exam") || sitLower.includes("test") || sitLower.includes("quiz") || sitLower.includes("study")) {
+    title = "High-Intensity Exam Prep";
+    description = "Intense review of core concepts, textbook highlights, and past practice problems.";
+    estimatedMinutes = 180;
+    project = "Academics";
+    tags = ["exam", "revision"];
+    difficulty = "Hard";
+    focusRequirement = "Deep Focus";
+    energyRequirement = "High";
+  } else if (sitLower.includes("clean") || sitLower.includes("room") || sitLower.includes("house") || sitLower.includes("wash") || sitLower.includes("laundry")) {
+    title = "Emergency Deep Clean";
+    description = "Tidy up surfaces, organize workspace, clear floor clutter, and take out trash.";
+    estimatedMinutes = 45;
+    project = "Personal";
+    tags = ["lifestyle", "quick-win"];
+    difficulty = "Easy";
+    focusRequirement = "Low Focus";
+    energyRequirement = "Medium";
+  } else if (sitLower.includes("code") || sitLower.includes("bug") || sitLower.includes("program") || sitLower.includes("software") || sitLower.includes("app")) {
+    title = "Debug Core Application Issues";
+    description = "Analyze error stacks, inspect logs, locate broken methods, and implement hotfixes.";
+    estimatedMinutes = 90;
+    project = "Software Development";
+    tags = ["coding", "hotfix"];
+    difficulty = "Medium";
+    focusRequirement = "High Focus";
+    energyRequirement = "High";
+  } else if (sitLower.includes("meet") || sitLower.includes("meeting") || sitLower.includes("interview") || sitLower.includes("call")) {
+    title = "Prepare Meeting Strategy & Materials";
+    description = "Outline discussion points, review agenda, coordinate materials, and align objectives.";
+    estimatedMinutes = 60;
+    project = "Career";
+    tags = ["professional", "meeting"];
+    difficulty = "Medium";
+    focusRequirement = "Medium Focus";
+    energyRequirement = "Medium";
+  }
+
+  if (urgency === "High" || importance === "High") {
+    riskLevel = "High";
+    completionProbability = 60;
+  }
+  if (urgency === "High" && importance === "High") {
+    riskLevel = "Critical";
+    completionProbability = 45;
+  }
+
+  const subtasks = [
+    { text: "Gather necessary materials & clear workspace distractions", estimatedMinutes: 10, difficulty: "Easy" as const, priority: "High" as const },
+    { text: "Draft initial structured outline or step-by-step roadmap", estimatedMinutes: 15, difficulty: "Medium" as const, priority: "Medium" as const },
+    { text: "Execute high-focus core components of the objective", estimatedMinutes: Math.round(estimatedMinutes * 0.6), difficulty, priority: "High" as const },
+    { text: "Conduct strict self-audit, quality check, and final validation", estimatedMinutes: 15, difficulty: "Medium" as const, priority: "High" as const }
+  ];
+
+  const aiSummary = `This simulated plan handles "${situation}" with high tactical efficiency. To overcome this obstacle within your target deadline under ${urgency.toLowerCase()} urgency, we have structured a high-focus milestone approach. Start immediately by tackling distraction mitigation, then dive into the key objectives.`;
+
+  return {
+    title,
+    description,
+    estimatedMinutes,
+    difficulty,
+    focusRequirement,
+    energyRequirement,
+    riskLevel,
+    completionProbability,
+    tags,
+    project,
+    aiSummary,
+    subtasks
+  };
+}
 
 // Helper to simulate prioritization when Gemini is unavailable
 function simulatePrioritization(taskList: Task[]): Task[] {
@@ -407,6 +560,8 @@ app.get("/api/status", (req, res) => {
 
 // 1. Get all tasks
 app.get("/api/tasks", (req, res) => {
+  // Dynamically recalculate task urgency live at fetch time to prevent stale metrics
+  syncAllTasksUrgency();
   res.json(tasks);
 });
 
@@ -433,6 +588,7 @@ app.post("/api/tasks", async (req, res) => {
       importance,
       status: "pending",
       createdAt: new Date().toISOString(),
+      urgency: calculateDeadlineUrgency(deadline, importance),
       
       // Smart Task System additions
       difficulty: req.body.difficulty || "Medium",
@@ -450,9 +606,9 @@ app.post("/api/tasks", async (req, res) => {
       priorityScore: null,
       priorityLabel: null,
       priorityReasoning: null,
-      subtasks: null,
-      aiBreakdownInsight: null,
-      suggestedResource: null
+      subtasks: Array.isArray(req.body.subtasks) ? req.body.subtasks : null,
+      aiBreakdownInsight: req.body.aiBreakdownInsight || null,
+      suggestedResource: req.body.suggestedResource || null
     };
 
     tasks.push(newTask);
@@ -460,11 +616,129 @@ app.post("/api/tasks", async (req, res) => {
     // Auto prioritize if Gemini key is available, else simulate
     await triggerGlobalPrioritization();
 
+    syncAllTasksUrgency();
     const created = tasks.find(t => t.id === newTask.id);
     res.status(201).json(created);
   } catch (error: any) {
     console.error("Create task failed:", sanitizeError(error));
     res.status(500).json({ error: "An error occurred while creating the task. Please try again." });
+  }
+});
+
+// 2b. Analyze a custom situation and return pre-populated Smart Task fields
+app.post("/api/tasks/analyze-situation", async (req, res) => {
+  try {
+    const { situation, urgency, importance } = req.body;
+    if (!situation || !situation.trim()) {
+      return res.status(400).json({ error: "Situation description is required." });
+    }
+
+    const urgencyVal = urgency || "Medium";
+    const importanceVal = importance || "Medium";
+
+    if (!ai) {
+      const simulated = simulateAnalyzeSituation(situation, urgencyVal, importanceVal);
+      return res.json(simulated);
+    }
+
+    const systemPrompt = "You are the Last-Minute Life-Saver Smart Task Analyzer. Your goal is to dissect a user's crisis or situation into a highly structured, realistic, and actionable task structure.";
+    const cleanPrompt = `Dissect this user crisis/situation into a structured task:
+Situation: "${situation}"
+User-selected urgency context: "${urgencyVal}" (Low, Medium, High)
+User-selected importance context: "${importanceVal}" (Low, Medium, High)
+
+Analyze and return JSON conforming exactly to the following properties:
+- title: string (An action-oriented, clear title. Maximum 50 characters)
+- description: string (A concise, helpful descriptive summary. Maximum 200 characters)
+- estimatedMinutes: integer (A realistic, sensible estimate of total minutes needed)
+- difficulty: string (Must be exactly 'Easy', 'Medium', or 'Hard')
+- focusRequirement: string (Must be exactly 'Low Focus', 'Medium Focus', 'High Focus', or 'Deep Focus')
+- energyRequirement: string (Must be exactly 'Low', 'Medium', or 'High')
+- riskLevel: string (Must be exactly 'Low', 'Medium', 'High', or 'Critical')
+- completionProbability: integer (A realistic probability percentage, e.g. 10 to 95)
+- tags: array of strings (2-3 relevant tags)
+- project: string (A single-word project category, e.g. 'ML Course', 'Career', 'Personal', 'General')
+- aiSummary: string (A concise 1-paragraph summary of the situation and tactical survival advice)
+- subtasks: array of objects, each with:
+  - text: string (Actionable step, e.g. 'Draft initial outline')
+  - estimatedMinutes: integer (Suggested minutes for this step)
+  - difficulty: string (Must be exactly 'Easy', 'Medium', or 'Hard')
+  - priority: string (Must be exactly 'Low', 'Medium', or 'High')
+`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: cleanPrompt,
+      config: {
+        systemInstruction: systemPrompt,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            description: { type: Type.STRING },
+            estimatedMinutes: { type: Type.INTEGER },
+            difficulty: { type: Type.STRING },
+            focusRequirement: { type: Type.STRING },
+            energyRequirement: { type: Type.STRING },
+            riskLevel: { type: Type.STRING },
+            completionProbability: { type: Type.INTEGER },
+            tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+            project: { type: Type.STRING },
+            aiSummary: { type: Type.STRING },
+            subtasks: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  text: { type: Type.STRING },
+                  estimatedMinutes: { type: Type.INTEGER },
+                  difficulty: { type: Type.STRING },
+                  priority: { type: Type.STRING }
+                },
+                required: ["text", "estimatedMinutes", "difficulty", "priority"]
+              }
+            }
+          },
+          required: [
+            "title", "description", "estimatedMinutes", "difficulty", 
+            "focusRequirement", "energyRequirement", "riskLevel", 
+            "completionProbability", "tags", "project", "aiSummary", "subtasks"
+          ]
+        }
+      }
+    });
+
+    const parsed = JSON.parse(response.text || "{}");
+    const formattedSubtasks = (parsed.subtasks || []).map((sub: any, idx: number) => ({
+      id: `sub-${idx}-${Math.random().toString(36).substring(2, 5)}`,
+      text: sanitizeInput(sub.text, 100),
+      done: false,
+      estimatedMinutes: Math.max(1, Math.min(1440, Number(sub.estimatedMinutes) || 15)),
+      difficulty: ["Easy", "Medium", "Hard"].includes(sub.difficulty) ? sub.difficulty : "Medium",
+      priority: ["Low", "Medium", "High"].includes(sub.priority) ? sub.priority : "Medium"
+    }));
+
+    res.json({
+      title: sanitizeInput(parsed.title, 100) || "Resolve Described Situation",
+      description: sanitizeInput(parsed.description, 200) || "",
+      estimatedMinutes: Math.max(1, Math.min(1440, Number(parsed.estimatedMinutes) || 60)),
+      difficulty: ["Easy", "Medium", "Hard"].includes(parsed.difficulty) ? parsed.difficulty : "Medium",
+      focusRequirement: ["Low Focus", "Medium Focus", "High Focus", "Deep Focus"].includes(parsed.focusRequirement) ? parsed.focusRequirement : "Medium Focus",
+      energyRequirement: ["Low", "Medium", "High"].includes(parsed.energyRequirement) ? parsed.energyRequirement : "Medium",
+      riskLevel: ["Low", "Medium", "High", "Critical"].includes(parsed.riskLevel) ? parsed.riskLevel : "Low",
+      completionProbability: Math.max(0, Math.min(100, Number(parsed.completionProbability) || 75)),
+      tags: Array.isArray(parsed.tags) ? parsed.tags.map((t: any) => sanitizeInput(t, 20)).filter(Boolean) : [],
+      project: sanitizeInput(parsed.project, 30) || "General",
+      aiSummary: sanitizeInput(parsed.aiSummary, 500) || "Task analyzed and structured.",
+      subtasks: formattedSubtasks
+    });
+  } catch (error: any) {
+    console.error("Analyze situation failed:", sanitizeError(error));
+    // Fallback on error
+    const { situation, urgency, importance } = req.body;
+    const simulated = simulateAnalyzeSituation(situation || "", urgency || "Medium", importance || "Medium");
+    res.json(simulated);
   }
 });
 
@@ -486,7 +760,13 @@ app.put("/api/tasks/:id", async (req, res) => {
     
     if (req.body.title !== undefined) currentTask.title = sanitizeInput(req.body.title, 100);
     if (req.body.description !== undefined) currentTask.description = sanitizeInput(req.body.description, 500);
-    if (req.body.deadline !== undefined) currentTask.deadline = sanitizeInput(req.body.deadline);
+    if (req.body.deadline !== undefined) {
+      currentTask.deadline = sanitizeInput(req.body.deadline);
+      if (req.body.urgency === undefined) {
+        currentTask.urgency = calculateDeadlineUrgency(currentTask.deadline, currentTask.importance);
+      }
+    }
+    if (req.body.urgency !== undefined) currentTask.urgency = req.body.urgency;
     if (req.body.estimatedMinutes !== undefined) currentTask.estimatedMinutes = Number(req.body.estimatedMinutes);
     if (req.body.importance !== undefined) currentTask.importance = req.body.importance;
     if (req.body.status !== undefined) currentTask.status = req.body.status;
@@ -534,6 +814,7 @@ app.put("/api/tasks/:id", async (req, res) => {
       await triggerGlobalPrioritization();
     }
 
+    syncAllTasksUrgency();
     res.json(tasks[taskIndex]);
   } catch (error: any) {
     console.error("Update task failed:", sanitizeError(error));
@@ -558,10 +839,22 @@ app.delete("/api/tasks/:id", async (req, res) => {
   }
 });
 
+// Bulk purge all tasks
+app.post("/api/tasks/purge", async (req, res) => {
+  try {
+    tasks = [];
+    res.json({ success: true, tasks: [] });
+  } catch (error: any) {
+    console.error("Purge all tasks failed:", sanitizeError(error));
+    res.status(500).json({ error: "An error occurred while purging all tasks." });
+  }
+});
+
 // 5. Trigger priority ranking via Gemini API
 app.post("/api/tasks/prioritize", async (req, res) => {
   try {
     await triggerGlobalPrioritization();
+    syncAllTasksUrgency();
     res.json({ success: true, tasks });
   } catch (error: any) {
     console.error("Prioritization endpoint failed:", sanitizeError(error));
@@ -574,6 +867,7 @@ app.post("/api/tasks/seed", async (req, res) => {
   try {
     tasks = getDefaultTasks();
     await triggerGlobalPrioritization();
+    syncAllTasksUrgency();
     res.json({ success: true, tasks });
   } catch (error: any) {
     console.error("Seed default tasks failed:", sanitizeError(error));
@@ -729,6 +1023,7 @@ app.post("/api/tasks/:id/breakdown", async (req, res) => {
       readTime: sanitizeInput(parsed.suggestedResource.readTime, 50)
     } : { title: "General Documentation", readTime: "5 mins" };
 
+    syncAllTasksUrgency();
     res.json(task);
   } catch (error: any) {
     console.error("Task breakdown failed:", sanitizeError(error));
@@ -738,6 +1033,7 @@ app.post("/api/tasks/:id/breakdown", async (req, res) => {
       task.subtasks = simulated.subtasks;
       task.aiBreakdownInsight = simulated.aiBreakdownInsight;
       task.suggestedResource = simulated.suggestedResource;
+      syncAllTasksUrgency();
       return res.json(task);
     }
     res.status(500).json({ error: "Failed to generate task breakdown. Fallback simulation triggered." });
@@ -789,12 +1085,14 @@ app.post("/api/tasks/:id/context-notes", async (req, res) => {
     const parsed = JSON.parse(response.text || "{}");
     task.contextNotes = sanitizeInput(parsed.contextNotes, 500) || simulateContextNotes(task.title, task.description || "", task.importance);
 
+    syncAllTasksUrgency();
     res.json(task);
   } catch (error: any) {
     console.error("Context notes generation failed:", sanitizeError(error));
     const task = tasks.find(t => t.id === req.params.id);
     if (task) {
       task.contextNotes = simulateContextNotes(task.title, task.description || "", task.importance);
+      syncAllTasksUrgency();
       return res.json(task);
     }
     res.status(500).json({ error: "Failed to generate context notes. Fallback simulation triggered." });
