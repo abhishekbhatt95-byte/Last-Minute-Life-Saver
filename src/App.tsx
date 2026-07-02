@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { Task, Subtask, AIPlannerSuggestion, FocusSession } from "./types";
 import { calculateFocusEfficacy } from "./focusScoring";
 import CommandPalette from "./components/CommandPalette";
+import DecisionSuite from "./components/DecisionSuite";
 
 export const COMPLETED_COLOR_TOKEN = "#14b8a6"; // Unified Teal color design token for completion states
 
@@ -180,7 +181,22 @@ export default function App() {
   
   // Recommendation Modal
   const [showWhatNowModal, setShowWhatNowModal] = useState(false);
-  const [recommendation, setRecommendation] = useState<{ id: string; title: string; reasoning: string; estimatedTimeStr: string } | null>(null);
+  const [recommendation, setRecommendation] = useState<{
+    id: string | null;
+    title: string;
+    confidence: number | null;
+    confidenceReasoning: string;
+    aiExplanation: {
+      whyThisTask: string;
+      whyNotOthers: string;
+      riskIfDelayed: string;
+      alternativeTaskIdea: string;
+      evidence: string[];
+    } | null;
+    topCandidates: Array<{ id: string; title: string; score: number; components: any }>;
+    source: "ai" | "cached" | "local";
+    isFallback: boolean;
+  } | null>(null);
 
   // Form Modals
   const [showAddModal, setShowAddModal] = useState(false);
@@ -265,6 +281,40 @@ export default function App() {
       console.error("Failed to save tasks cache", e);
     }
   }, [tasks]);
+
+  // Synchronize focus sessions with the server-side Context Builder
+  useEffect(() => {
+    fetch("/api/focus/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessions: focusSessions })
+    }).catch(err => console.error("Failed to sync focus sessions with server", err));
+  }, [focusSessions]);
+
+  // Synchronize active focus session with the server-side Context Builder
+  useEffect(() => {
+    fetch("/api/focus/active", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session: activeSession })
+    }).catch(err => console.error("Failed to sync active session with server", err));
+  }, [activeSession]);
+
+  // Sync user preferences with server on start and UserName/DeepFocus changes
+  useEffect(() => {
+    fetch("/api/user/preferences", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        preferences: {
+          preferredFocusDuration: Math.round(focusTimeTotal / 60),
+          dailyTargetMinutes: deepFocusTime,
+          preferredWorkingHours: "09:00 - 18:00",
+          coachingTone: "Encouraging but highly disciplined, realistic"
+        }
+      })
+    }).catch(err => console.error("Failed to sync preferences with server", err));
+  }, [focusTimeTotal, deepFocusTime]);
 
   useEffect(() => {
     let interval: any;
@@ -527,8 +577,8 @@ export default function App() {
 
     if (task.riskLevel === "Critical") {
       level = "Extreme Risk";
-      color = "text-red-400";
-      badgeClass = "bg-red-400/20 text-red-300 border border-red-400/30";
+      color = "text-amber-400";
+      badgeClass = "bg-amber-400/20 text-amber-300 border border-amber-400/30";
     } else if (task.riskLevel === "High") {
       level = "High Risk";
       color = "text-orange-400";
@@ -562,7 +612,7 @@ export default function App() {
     let color = "text-emerald-400";
     if (percentage > 85) {
       level = "Extreme";
-      color = "text-red-400";
+      color = "text-amber-400";
     } else if (percentage > 60) {
       level = "High Risk";
       color = "text-amber-400";
@@ -1238,8 +1288,12 @@ export default function App() {
         setRecommendation({
           id: data.recommendedTaskId,
           title: found ? found.title : "Recommended Task",
-          reasoning: data.reasoning,
-          estimatedTimeStr: data.estimatedTimeStr
+          confidence: data.confidence,
+          confidenceReasoning: data.confidenceReasoning || "",
+          aiExplanation: data.aiExplanation,
+          topCandidates: data.topCandidates || [],
+          source: data.source || "local",
+          isFallback: !!data.isFallback
         });
         setShowWhatNowModal(true);
       } else {
@@ -2183,7 +2237,7 @@ export default function App() {
                                 </div>
                                 <div className="bg-[#1e1f26]/60 p-3 rounded-lg border border-white/5">
                                   <span className="text-[9px] font-mono text-[#c7c4d7]/80 uppercase block">Deadline Risk</span>
-                                  <span className="font-mono text-sm text-amber-400 font-bold">
+                                  <span className={`font-mono text-sm font-bold ${calculateRisk(sortedPendingTasks[0]).color}`}>
                                     {calculateRisk(sortedPendingTasks[0]).percentage}% ({calculateRisk(sortedPendingTasks[0]).level})
                                   </span>
                                 </div>
@@ -2212,7 +2266,7 @@ export default function App() {
                                 setFocusIsRunning(true);
                                 showToast(`🎯 Pomodoro focus loaded: "${task.title}"`, "success");
                               }}
-                              className="bg-[#14b8a6] hover:bg-[#b0b2ff] text-[#022c22] font-bold text-xs px-6 py-3 rounded-xl transition-all shadow-md hover:scale-[1.03] active:scale-[0.98] flex items-center gap-1.5 cursor-pointer"
+                              className="bg-[#14b8a6] hover:bg-[#2dd4bf] text-[#022c22] font-bold text-xs px-6 py-3 rounded-xl transition-all shadow-md hover:scale-[1.03] active:scale-[0.98] flex items-center gap-1.5 cursor-pointer"
                             >
                               <span className="material-symbols-outlined text-[16px]">timer</span>
                               Deep Session
@@ -2227,7 +2281,7 @@ export default function App() {
                         ) : (
                           <button 
                             onClick={() => setShowAddModal(true)}
-                            className="bg-[#14b8a6] hover:bg-[#b0b2ff] text-[#022c22] font-bold text-xs px-6 py-3 rounded-xl transition-all cursor-pointer hover:scale-[1.03]"
+                            className="bg-[#14b8a6] hover:bg-[#2dd4bf] text-[#022c22] font-bold text-xs px-6 py-3 rounded-xl transition-all cursor-pointer hover:scale-[1.03]"
                           >
                             Create Target
                           </button>
@@ -2316,7 +2370,7 @@ export default function App() {
                             className={`flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer border ${
                               focusIsRunning 
                                 ? "bg-red-400/10 text-red-400 border-red-400/20 hover:bg-red-400/20" 
-                                : "bg-[#4edea3] hover:bg-[#3ec48f] text-[#0f172a] border-transparent"
+                                : "bg-[#14b8a6] hover:bg-[#2dd4bf] text-[#022c22] border-transparent"
                             }`}
                           >
                             <span className="material-symbols-outlined text-[16px] font-bold">
@@ -2629,7 +2683,7 @@ export default function App() {
                               <p className="text-xs text-[#c7c4d7] max-w-sm mx-auto">No outstanding tasks remain today. Use your planner dashboard to populate future goals.</p>
                             </div>
                             <div className="flex justify-center gap-2">
-                              <button onClick={() => setShowAddModal(true)} className="px-5 py-2 bg-[#14b8a6] hover:bg-[#b0b2ff] text-[#022c22] font-bold text-xs rounded-xl transition-all cursor-pointer">
+                              <button onClick={() => setShowAddModal(true)} className="px-5 py-2 bg-[#14b8a6] hover:bg-[#2dd4bf] text-[#022c22] font-bold text-xs rounded-xl transition-all cursor-pointer">
                                 Add Custom Target
                               </button>
                               <button onClick={seedTasks} className="px-5 py-2 bg-white/5 hover:bg-white/10 border border-white/5 text-white font-bold text-xs rounded-xl transition-all cursor-pointer">
@@ -2847,7 +2901,7 @@ export default function App() {
                               <button
                                 onClick={() => handleAskAICoach(aiAskQuery)}
                                 disabled={aiAskLoading}
-                                className="px-4 py-2 bg-[#14b8a6] hover:bg-[#b0b2ff] text-[#022c22] font-bold text-xs rounded-lg transition-all flex items-center gap-1 disabled:opacity-40"
+                                className="px-4 py-2 bg-[#14b8a6] hover:bg-[#2dd4bf] text-[#022c22] font-bold text-xs rounded-lg transition-all flex items-center gap-1 disabled:opacity-40"
                               >
                                 {aiAskLoading ? "Analyzing..." : "Ask"}
                               </button>
@@ -3810,7 +3864,7 @@ export default function App() {
                         <button
                           onClick={seedTasks}
                           disabled={actionLoading}
-                          className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#14b8a6] hover:bg-[#b0b2ff] text-[#022c22] font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+                          className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#14b8a6] hover:bg-[#2dd4bf] text-[#022c22] font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
                         >
                           <span className="material-symbols-outlined text-[16px]">restore</span>
                           {actionLoading ? "Seeding..." : "Restore Default Example Tasks"}
@@ -4574,50 +4628,30 @@ export default function App() {
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="glass-panel-heavy rounded-2xl max-w-md w-full p-6 md:p-8 space-y-6 glow-border"
+              className="glass-panel-heavy rounded-2xl max-w-lg w-full p-6 md:p-8 space-y-6 glow-border text-left"
             >
               <div className="flex justify-between items-center border-b border-white/5 pb-3">
                 <div className="flex items-center gap-2">
                   <span className="material-symbols-outlined text-[#14b8a6] animate-pulse-soft">psychology</span>
-                  <span className="text-xs font-mono text-[#14b8a6] uppercase tracking-wider">Coach Pick</span>
+                  <span className="text-xs font-mono text-[#14b8a6] uppercase tracking-wider">Decision Engine Pick</span>
                 </div>
-                <button onClick={() => setShowWhatNowModal(false)} className="text-[#c7c4d7] hover:text-white">
+                <button onClick={() => setShowWhatNowModal(false)} className="text-[#c7c4d7] hover:text-white cursor-pointer">
                   <span className="material-symbols-outlined">close</span>
                 </button>
               </div>
 
-              <div className="space-y-4">
-                <div>
-                  <span className="text-[10px] font-mono uppercase tracking-wider text-[#c7c4d7] block mb-1">Recommended task</span>
-                  <h3 className="font-bold text-xl text-white">{recommendation.title}</h3>
-                  <span className="font-mono text-xs text-[#14b8a6] block mt-1">Estimated duration: {recommendation.estimatedTimeStr}</span>
-                </div>
-
-                <div className="p-4 rounded-xl bg-[#14b8a6]/5 border border-[#14b8a6]/10 text-xs text-[#c7c4d7] leading-relaxed">
-                  <strong>Why now:</strong> {recommendation.reasoning}
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-4 border-t border-white/5">
-                <button
-                  onClick={() => setShowWhatNowModal(false)}
-                  className="flex-1 py-2.5 bg-[#1e1f26] hover:bg-[#33343b] rounded-lg text-xs font-semibold border border-white/10 text-[#c7c4d7] cursor-pointer"
-                >
-                  Close
-                </button>
-                <button
-                  onClick={() => {
-                    const task = tasks.find(t => t.id === recommendation.id);
-                    if (task) {
-                      setSelectedTask(task);
-                      setShowWhatNowModal(false);
-                    }
-                  }}
-                  className="flex-1 py-2.5 bg-[#14b8a6] hover:bg-[#14b8a6]/90 text-[#022c22] font-bold text-xs rounded-lg transition-all cursor-pointer text-center"
-                >
-                  Start This Task
-                </button>
-              </div>
+              <DecisionSuite
+                recommendation={recommendation as any}
+                tasks={tasks}
+                onClose={() => setShowWhatNowModal(false)}
+                onStartTask={(id) => {
+                  const task = tasks.find(t => t.id === id);
+                  if (task) {
+                    setSelectedTask(task);
+                    setShowWhatNowModal(false);
+                  }
+                }}
+              />
             </motion.div>
           </div>
         )}

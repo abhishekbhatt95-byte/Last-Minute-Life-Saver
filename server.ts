@@ -4,6 +4,11 @@ import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import { Task, Subtask } from "./src/types";
+import { contextState, buildAIContext, getAIContextPromptString } from "./contextBuilder";
+import { recommendationCache, getContextFingerprint, getCompositeContextVersion, invalidateRecommendationCache, decisionTraceStore } from "./recommendationCache";
+import { aiMemoryService } from "./aiMemoryService";
+import { promptRegistry } from "./promptRegistry";
+import { getWhatNowRecommendation } from "./decisionEngine";
 
 dotenv.config();
 
@@ -558,6 +563,53 @@ app.get("/api/status", (req, res) => {
   });
 });
 
+// Sync focus sessions with server state
+app.post("/api/focus/sessions", (req, res) => {
+  if (Array.isArray(req.body.sessions)) {
+    contextState.focusHistory = req.body.sessions;
+    invalidateRecommendationCache("focus");
+  }
+  res.json({ success: true, count: contextState.focusHistory.length });
+});
+
+// Sync active focus session
+app.post("/api/focus/active", (req, res) => {
+  contextState.currentWorkingSession = req.body.session || null;
+  invalidateRecommendationCache("focus");
+  res.json({ success: true, isActive: !!contextState.currentWorkingSession });
+});
+
+// Sync user preferences
+app.post("/api/user/preferences", (req, res) => {
+  if (req.body.preferences) {
+    contextState.userPreferences = {
+      ...contextState.userPreferences,
+      ...req.body.preferences
+    };
+    invalidateRecommendationCache("preferences");
+  }
+  res.json({ success: true, preferences: contextState.userPreferences });
+});
+
+// Update global energy level
+app.post("/api/user/energy", (req, res) => {
+  const level = req.body.energy;
+  if (["Low", "Medium", "High"].includes(level)) {
+    contextState.energyLevel = level;
+    invalidateRecommendationCache("preferences");
+    res.json({ success: true, energy: contextState.energyLevel });
+  } else {
+    res.status(400).json({ error: "Invalid energy level. Must be 'Low', 'Medium', or 'High'." });
+  }
+});
+
+// Get consolidated Context Builder data
+app.get("/api/context", (req, res) => {
+  syncAllTasksUrgency();
+  const context = buildAIContext(tasks);
+  res.json(context);
+});
+
 // 1. Get all tasks
 app.get("/api/tasks", (req, res) => {
   // Dynamically recalculate task urgency live at fetch time to prevent stale metrics
@@ -612,6 +664,7 @@ app.post("/api/tasks", async (req, res) => {
     };
 
     tasks.push(newTask);
+    invalidateRecommendationCache("tasks");
 
     // Auto prioritize if Gemini key is available, else simulate
     await triggerGlobalPrioritization();
@@ -641,7 +694,14 @@ app.post("/api/tasks/analyze-situation", async (req, res) => {
       return res.json(simulated);
     }
 
-    const systemPrompt = "You are the Last-Minute Life-Saver Smart Task Analyzer. Your goal is to dissect a user's crisis or situation into a highly structured, realistic, and actionable task structure.";
+    const context = buildAIContext(tasks);
+    const contextStr = getAIContextPromptString(context);
+
+    const systemPrompt = `You are the Last-Minute Life-Saver Smart Task Analyzer. Your goal is to dissect a user's crisis or situation into a highly structured, realistic, and actionable task structure.
+
+    Use the comprehensive system and productivity context below to align your planning with existing tasks and user preferences:
+    ${contextStr}`;
+
     const cleanPrompt = `Dissect this user crisis/situation into a structured task:
 Situation: "${situation}"
 User-selected urgency context: "${urgencyVal}" (Low, Medium, High)
@@ -710,6 +770,12 @@ Analyze and return JSON conforming exactly to the following properties:
     });
 
     const parsed = JSON.parse(response.text || "{}");
+    const taskTitle = sanitizeInput(parsed.title, 100) || "Resolve Described Situation";
+    
+    // Add recommendation and memory
+    aiMemoryService.addRecommendation(`Analyzed situation "${situation}" and generated smart task: "${taskTitle}"`);
+    aiMemoryService.addMemoryItem(`User resolved situation "${situation}" via Smart Task Analyzer.`);
+
     const formattedSubtasks = (parsed.subtasks || []).map((sub: any, idx: number) => ({
       id: `sub-${idx}-${Math.random().toString(36).substring(2, 5)}`,
       text: sanitizeInput(sub.text, 100),
@@ -720,7 +786,7 @@ Analyze and return JSON conforming exactly to the following properties:
     }));
 
     res.json({
-      title: sanitizeInput(parsed.title, 100) || "Resolve Described Situation",
+      title: taskTitle,
       description: sanitizeInput(parsed.description, 200) || "",
       estimatedMinutes: Math.max(1, Math.min(1440, Number(parsed.estimatedMinutes) || 60)),
       difficulty: ["Easy", "Medium", "Hard"].includes(parsed.difficulty) ? parsed.difficulty : "Medium",
@@ -814,6 +880,7 @@ app.put("/api/tasks/:id", async (req, res) => {
       await triggerGlobalPrioritization();
     }
 
+    invalidateRecommendationCache("tasks");
     syncAllTasksUrgency();
     res.json(tasks[taskIndex]);
   } catch (error: any) {
@@ -832,6 +899,7 @@ app.delete("/api/tasks/:id", async (req, res) => {
       return res.status(404).json({ error: "Task not found" });
     }
     await triggerGlobalPrioritization();
+    invalidateRecommendationCache("tasks");
     res.json({ success: true });
   } catch (error: any) {
     console.error("Delete task failed:", sanitizeError(error));
@@ -843,6 +911,7 @@ app.delete("/api/tasks/:id", async (req, res) => {
 app.post("/api/tasks/purge", async (req, res) => {
   try {
     tasks = [];
+    invalidateRecommendationCache("tasks");
     res.json({ success: true, tasks: [] });
   } catch (error: any) {
     console.error("Purge all tasks failed:", sanitizeError(error));
@@ -866,6 +935,7 @@ app.post("/api/tasks/prioritize", async (req, res) => {
 app.post("/api/tasks/seed", async (req, res) => {
   try {
     tasks = getDefaultTasks();
+    invalidateRecommendationCache("tasks");
     await triggerGlobalPrioritization();
     syncAllTasksUrgency();
     res.json({ success: true, tasks });
@@ -876,6 +946,107 @@ app.post("/api/tasks/seed", async (req, res) => {
 });
 
 // Helper function to rank and update all tasks using Gemini
+function applyPrioritizationUpdates(cachedUpdates: any[]) {
+  tasks = tasks.map(t => {
+    const update = cachedUpdates.find((u: any) => u.id === t.id);
+    if (update) {
+      return {
+        ...t,
+        priorityScore: Math.max(0, Math.min(100, Number(update.priorityScore) || 0)),
+        priorityLabel: ["High", "Medium", "Low"].includes(update.priorityLabel) ? update.priorityLabel : "Medium",
+        priorityReasoning: sanitizeInput(update.priorityReasoning, 500)
+      };
+    }
+    if (t.status === "completed") {
+      return { ...t, priorityScore: 0, priorityLabel: "Low" as const, priorityReasoning: "Completed." };
+    }
+    return t;
+  });
+}
+
+async function revalidatePrioritization(
+  pendingTasks: Task[],
+  fingerprint: string,
+  contextVersion: string,
+  promptVersion: string
+) {
+  if (!ai) return;
+
+  const registered = promptRegistry.getPrompt("prioritization");
+  const context = buildAIContext(tasks);
+  const contextStr = getAIContextPromptString(context);
+
+  const formattedData = pendingTasks.map(t => ({
+    id: t.id,
+    title: sanitizeInput(t.title, 100),
+    description: sanitizeInput(t.description, 500),
+    deadline: sanitizeInput(t.deadline),
+    estimatedMinutes: t.estimatedMinutes,
+    importance: t.importance
+  }));
+
+  const systemInstruction = registered.systemPrompt;
+  const userPrompt = registered.userPromptTemplate(contextStr, formattedData);
+
+  const startTime = Date.now();
+  let validatorResult = false;
+  let fallbackUsage = false;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: userPrompt,
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: registered.outputSchema
+      }
+    });
+
+    const text = response.text || "";
+    const priorityUpdates = JSON.parse(text);
+    validatorResult = Array.isArray(priorityUpdates);
+
+    applyPrioritizationUpdates(priorityUpdates);
+
+    const updatesToCache = tasks.map(t => ({
+      id: t.id,
+      priorityScore: t.priorityScore,
+      priorityLabel: t.priorityLabel,
+      priorityReasoning: t.priorityReasoning
+    }));
+
+    recommendationCache.set(
+      "prioritization",
+      fingerprint,
+      updatesToCache,
+      {
+        contextVersion,
+        promptVersion: registered.version,
+        aiModel: "gemini-3.5-flash"
+      }
+    );
+
+    aiMemoryService.addRecommendation(`Completed real-time task backlog prioritization based on deadlines and focus profiles.`);
+  } catch (err) {
+    fallbackUsage = true;
+    throw err;
+  } finally {
+    const latency = Date.now() - startTime;
+    decisionTraceStore.addTrace({
+      id: `trace-prioritization-${Date.now()}`,
+      timestamp: Date.now(),
+      contextVersion,
+      promptVersion: registered.version,
+      source: "ai",
+      cacheHit: false,
+      llmLatency: latency,
+      validatorResult,
+      fallbackUsage
+    });
+  }
+}
+
 async function triggerGlobalPrioritization() {
   if (!ai) {
     tasks = simulatePrioritization(tasks);
@@ -888,66 +1059,61 @@ async function triggerGlobalPrioritization() {
   }
 
   try {
-    const prompt = `You are Life Saver AI, an expert real-time productivity coach. Rank the following tasks by optimal priority score (0 to 100), label them ("High", "Medium", or "Low"), and provide a 1-sentence reasoning explaining "Why this matters now" based on their deadline, duration, and importance.
-    
-    Current Time: ${new Date().toISOString()}
+    const fingerprint = getContextFingerprint();
+    const contextVersion = getCompositeContextVersion();
+    const registered = promptRegistry.getPrompt("prioritization");
+    const promptVersion = registered.version;
 
-    Tasks list:
-    ${JSON.stringify(pendingTasks.map(t => ({
-      id: t.id,
-      title: sanitizeInput(t.title, 100),
-      description: sanitizeInput(t.description, 500),
-      deadline: sanitizeInput(t.deadline),
-      estimatedMinutes: t.estimatedMinutes,
-      importance: t.importance
-    })))}
-
-    Return a JSON array of prioritized tasks containing ONLY the prioritized scores, labels, and reasoning.
-    Do not alter titles, deadlines, or anything else. Just prioritize.`;
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              id: { type: Type.STRING },
-              priorityScore: { type: Type.INTEGER, description: "A value from 0 to 100" },
-              priorityLabel: { type: Type.STRING, description: "High, Medium, or Low" },
-              priorityReasoning: { type: Type.STRING, description: "A concise 1-sentence explanation of why this is prioritized" }
-            },
-            required: ["id", "priorityScore", "priorityLabel", "priorityReasoning"]
-          }
-        }
+    const cachedUpdates = recommendationCache.get<any[]>(
+      "prioritization",
+      fingerprint,
+      promptVersion,
+      contextVersion,
+      async () => {
+        console.log("[SWR REVALIDATE] Asynchronously refreshing task prioritization cache.");
+        await recommendationCache.runCoalesced("prioritization", async () => {
+          await revalidatePrioritization(pendingTasks, fingerprint, contextVersion, promptVersion);
+        });
       }
+    );
+
+    if (cachedUpdates) {
+      console.log("[CACHE HIT] Reusing cached task prioritization updates.");
+      applyPrioritizationUpdates(cachedUpdates);
+
+      decisionTraceStore.addTrace({
+        id: `trace-prioritization-${Date.now()}`,
+        timestamp: Date.now(),
+        contextVersion,
+        promptVersion,
+        source: "cached",
+        cacheHit: true,
+        llmLatency: 0,
+        validatorResult: true,
+        fallbackUsage: false
+      });
+      return;
+    }
+
+    await recommendationCache.runCoalesced("prioritization", async () => {
+      await revalidatePrioritization(pendingTasks, fingerprint, contextVersion, promptVersion);
     });
-
-    const text = response.text || "";
-    const priorityUpdates = JSON.parse(text);
-
-    tasks = tasks.map(t => {
-      const update = priorityUpdates.find((u: any) => u.id === t.id);
-      if (update) {
-        return {
-          ...t,
-          priorityScore: Math.max(0, Math.min(100, Number(update.priorityScore) || 0)),
-          priorityLabel: ["High", "Medium", "Low"].includes(update.priorityLabel) ? update.priorityLabel : "Medium",
-          priorityReasoning: sanitizeInput(update.priorityReasoning, 500)
-        };
-      }
-      if (t.status === "completed") {
-        return { ...t, priorityScore: 0, priorityLabel: "Low" as const, priorityReasoning: "Completed." };
-      }
-      return t;
-    });
-
   } catch (error) {
     console.error("Gemini prioritization failed, falling back to simulated calculation:", sanitizeError(error));
     tasks = simulatePrioritization(tasks);
+
+    const registered = promptRegistry.getPrompt("prioritization");
+    decisionTraceStore.addTrace({
+      id: `trace-prioritization-${Date.now()}`,
+      timestamp: Date.now(),
+      contextVersion: getCompositeContextVersion(),
+      promptVersion: registered.version,
+      source: "local",
+      cacheHit: false,
+      llmLatency: 0,
+      validatorResult: false,
+      fallbackUsage: true
+    });
   }
 }
 
@@ -971,8 +1137,16 @@ app.post("/api/tasks/:id/breakdown", async (req, res) => {
     const cleanTitle = sanitizeInput(task.title, 100);
     const cleanDescription = sanitizeInput(task.description, 500);
 
+    const context = buildAIContext(tasks);
+    const contextStr = getAIContextPromptString(context);
+
     const prompt = `Break down the following task into 3-5 concise, concrete subtasks/checkpoints.
-    Task: "${cleanTitle}"
+    
+    To contextualize this breakdown beautifully, consult the user's current productivity profiles, energy level, and memory history:
+    ${contextStr}
+
+    Task to break down:
+    Title: "${cleanTitle}"
     Description: "${cleanDescription}"
     Deadline: ${task.deadline}
     Importance: ${task.importance}
@@ -1023,6 +1197,9 @@ app.post("/api/tasks/:id/breakdown", async (req, res) => {
       readTime: sanitizeInput(parsed.suggestedResource.readTime, 50)
     } : { title: "General Documentation", readTime: "5 mins" };
 
+    aiMemoryService.addRecommendation(`Broke down task "${task.title}" into ${task.subtasks.length} actionable sub-milestones.`);
+    aiMemoryService.addMemoryItem(`User requested dynamic breakdown for task: "${task.title}".`);
+
     syncAllTasksUrgency();
     res.json(task);
   } catch (error: any) {
@@ -1058,7 +1235,14 @@ app.post("/api/tasks/:id/context-notes", async (req, res) => {
     const cleanTitle = sanitizeInput(task.title, 100);
     const cleanDescription = sanitizeInput(task.description, 500);
 
+    const context = buildAIContext(tasks);
+    const contextStr = getAIContextPromptString(context);
+
     const prompt = `Synthesize a highly effective, concise context-switching "resumption note" (maximum 2-3 sentences or bullet points) for the following task:
+    
+    Incorporate the user's specific work profile, preferences, and focus habits from their comprehensive productivity context:
+    ${contextStr}
+
     Task Title: "${cleanTitle}"
     Task Description: "${cleanDescription}"
     Focus Requirement: "${task.focusRequirement || "Deep Focus"}"
@@ -1084,6 +1268,9 @@ app.post("/api/tasks/:id/context-notes", async (req, res) => {
 
     const parsed = JSON.parse(response.text || "{}");
     task.contextNotes = sanitizeInput(parsed.contextNotes, 500) || simulateContextNotes(task.title, task.description || "", task.importance);
+
+    aiMemoryService.addRecommendation(`Synthesized custom resumption notes to streamline focus activation for "${task.title}".`);
+    aiMemoryService.addMemoryItem(`User requested resumption context tips for task: "${task.title}".`);
 
     syncAllTasksUrgency();
     res.json(task);
@@ -1116,62 +1303,137 @@ function simulateContextNotes(title: string, description: string, importance: st
   return `To resume "${title}": Close all irrelevant browser tabs, review your subtasks checklist for 2 minutes to eliminate activation energy, and tackle the absolute smallest micro-action first. You've got this!`;
 }
 
-// 7. Reccommend "What Should I Do Right Now?"
-app.post("/api/tasks/what-now", async (req, res) => {
+async function revalidateWhatNow(
+  pending: Task[],
+  fingerprint: string,
+  contextVersion: string,
+  promptVersion: string
+): Promise<any> {
+  if (!ai) {
+    return simulateWhatNow(tasks);
+  }
+
+  const registered = promptRegistry.getPrompt("what-now");
+  const context = buildAIContext(tasks);
+  const contextStr = getAIContextPromptString(context);
+
+  const formattedData = pending.map(t => ({
+    id: t.id,
+    title: t.title,
+    description: t.description,
+    deadline: t.deadline,
+    estimatedMinutes: t.estimatedMinutes,
+    importance: t.importance,
+    priorityScore: t.priorityScore
+  }));
+
+  const systemInstruction = registered.systemPrompt;
+  const userPrompt = registered.userPromptTemplate(contextStr, formattedData);
+
+  const startTime = Date.now();
+  let validatorResult = false;
+  let fallbackUsage = false;
+
   try {
-    const pending = tasks.filter(t => t.status === "pending");
-    if (pending.length === 0) {
-      return res.json({ recommendedTaskId: "", reasoning: "All caught up! You saved your future self.", estimatedTimeStr: "" });
-    }
-
-    if (!ai) {
-      return res.json(simulateWhatNow(tasks));
-    }
-
-    const prompt = `Analyze these pending tasks and recommend EXACTLY ONE that the user should start working on RIGHT NOW. Take into account deadlines, estimated times, importance levels, and priority scores.
-    Current Time: ${new Date().toISOString()}
-
-    Tasks:
-    ${JSON.stringify(pending.map(t => ({
-      id: t.id,
-      title: t.title,
-      description: t.description,
-      deadline: t.deadline,
-      estimatedMinutes: t.estimatedMinutes,
-      importance: t.importance,
-      priorityScore: t.priorityScore
-    })))}
-
-    Return JSON with the recommended task ID, a robust and motivating reasoning explaining why this is the highest priority right now, and a formatted estimated duration string (e.g., "~2h 30m").`;
-
     const response = await ai.models.generateContent({
       model: "gemini-3.5-flash",
-      contents: prompt,
+      contents: userPrompt,
       config: {
+        systemInstruction,
         responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            recommendedTaskId: { type: Type.STRING },
-            reasoning: { type: Type.STRING, description: "Motivational explanation of why this specific task is recommended now" },
-            estimatedTimeStr: { type: Type.STRING, description: "Formatted string like '~2h 30m'" }
-          },
-          required: ["recommendedTaskId", "reasoning", "estimatedTimeStr"]
-        }
+        responseSchema: registered.outputSchema
       }
     });
 
     const parsed = JSON.parse(response.text || "{}");
-    res.json({
-      recommendedTaskId: sanitizeInput(parsed.recommendedTaskId, 50),
+    validatorResult = !!(parsed.recommendedTaskId && parsed.reasoning);
+
+    const recId = sanitizeInput(parsed.recommendedTaskId, 50);
+    const recTask = tasks.find(t => t.id === recId);
+    if (recTask) {
+      aiMemoryService.addRecommendation(`Recommended working on task "${recTask.title}" right now based on active bottlenecks and energy state.`);
+    }
+
+    const result = {
+      recommendedTaskId: recId,
       reasoning: sanitizeInput(parsed.reasoning, 500),
       estimatedTimeStr: sanitizeInput(parsed.estimatedTimeStr, 50)
+    };
+
+    recommendationCache.set(
+      "what-now",
+      fingerprint,
+      result,
+      {
+        contextVersion,
+        promptVersion: registered.version,
+        aiModel: "gemini-3.5-flash"
+      }
+    );
+
+    return result;
+  } catch (err) {
+    fallbackUsage = true;
+    throw err;
+  } finally {
+    const latency = Date.now() - startTime;
+    decisionTraceStore.addTrace({
+      id: `trace-what-now-${Date.now()}`,
+      timestamp: Date.now(),
+      contextVersion,
+      promptVersion: registered.version,
+      source: "ai",
+      cacheHit: false,
+      llmLatency: latency,
+      validatorResult,
+      fallbackUsage
     });
+  }
+}
+
+// 7. Recommend "What Should I Do Right Now?" (Phase 3.2 AI Decision Engine)
+app.post("/api/tasks/what-now", async (req, res) => {
+  try {
+    const { forceRefresh } = req.body;
+    const recommendation = await getWhatNowRecommendation(tasks, !!forceRefresh);
+    res.json(recommendation);
   } catch (error: any) {
-    console.error("What Now failed:", sanitizeError(error));
-    res.json(simulateWhatNow(tasks));
+    console.error("What Now Decision Engine failed:", sanitizeError(error));
+    // Safe hard-fallback to the absolute top scored task locally
+    const pending = tasks.filter(t => t.status === "pending");
+    if (pending.length === 0) {
+      return res.json({
+        recommendedTaskId: null,
+        confidence: null,
+        confidenceReasoning: "No pending tasks available.",
+        aiExplanation: null,
+        topCandidates: [],
+        source: "local",
+        isFallback: true,
+        decisionInputs: null
+      });
+    }
+    const sorted = [...pending].sort((a, b) => (b.priorityScore || 0) - (a.priorityScore || 0));
+    const recTask = sorted[0];
+    res.json({
+      recommendedTaskId: recTask.id,
+      confidence: 50,
+      confidenceReasoning: "Fallback low-confidence due to execution error.",
+      aiExplanation: {
+        whyThisTask: `Fallback to task "${recTask.title}" based on local static priorities.`,
+        whyNotOthers: "Unable to run comparative analysis due to a server error.",
+        riskIfDelayed: "The project deadlines may be delayed if work is not started soon.",
+        alternativeTaskIdea: "Try manually selecting any of your other pending tasks.",
+        evidence: ["Local Priority Score fallback"]
+      },
+      topCandidates: [{ id: recTask.id, title: recTask.title, score: recTask.priorityScore || 50, components: null }],
+      source: "local",
+      isFallback: true,
+      decisionInputs: null
+    });
   }
 });
+
 
 // 8. Generate suggestions using the AI Planner
 app.post("/api/tasks/generate-plan", async (req, res) => {
@@ -1192,7 +1454,13 @@ app.post("/api/tasks/generate-plan", async (req, res) => {
 
     const cleanPrompt = sanitizeInput(userPrompt || "suggest some relevant next steps for AI development", 500);
 
+    const context = buildAIContext(tasks);
+    const contextStr = getAIContextPromptString(context);
+
     const systemPrompt = `You are Life Saver AI, an advanced productivity coach. Based on the user's prompt (like 'suggest 3 tasks for internship prep' or 'help me with model tuning'), generate 2 to 3 practical, high-fidelity productivity tasks that they should add to their schedule.
+    
+    Take into account their entire operating system context, including existing deadlines, busy calendar blocks, current focus efficacy, and energy patterns, so you don't overwhelm them with duplicate projects or unrealistic schedules:
+    ${contextStr}
     
     Each task should have:
     - title: brief, action-oriented (e.g. 'Read Scikit-Learn ensembles', 'Draft STAR stories')
@@ -1258,6 +1526,9 @@ app.post("/api/tasks/generate-plan", async (req, res) => {
       importance: ["Low", "Medium", "High"].includes(t.importance) ? t.importance : "Medium",
       description: sanitizeInput(t.description, 500)
     }));
+
+    aiMemoryService.addRecommendation(`Generated customized planner recommendation for: "${cleanPrompt}".`);
+    aiMemoryService.addMemoryItem(`User requested custom productivity plan for prompt: "${cleanPrompt}".`);
 
     res.json({ responseText, suggestedTasks });
   } catch (error: any) {
@@ -1507,9 +1778,15 @@ app.post("/api/ai/command", async (req, res) => {
       return res.json(offlineResult);
     }
 
-    const currentTimeIso = new Date().toISOString();
+    const context = buildAIContext(tasks);
+    const contextStr = getAIContextPromptString(context);
+
     const systemPrompt = `You are Life Saver OS, an intelligent operating system designed to manage productivity through natural language.
 Your job is to parse the user's natural language command, identify their intent, and extract relevant parameters into a structured command response.
+
+Make sure you understand the comprehensive current state of Life Saver OS before making any execution decisions:
+${contextStr}
+
 Classify the intent into exactly one of the following actions:
 - "create_task": User wants to create/add/schedule a task or homework. Extract fields: title, description, deadline (ISO date string relative to current time), estimatedMinutes (integer, default 45), importance (Low/Medium/High, default Medium), difficulty (Easy/Medium/Hard), focusRequirement (Low Focus/Medium Focus/High Focus/Deep Focus), energyRequirement (Low/Medium/High), riskLevel (Low/Medium/High/Critical), tags (array of strings), project (string), subtasks (array of strings, optional).
 - "plan_day": User wants to map, schedule, or plan their day/schedule/day's agenda.
@@ -1524,7 +1801,6 @@ Classify the intent into exactly one of the following actions:
 
 Provide a highly professional and motivating 'responseText' summarizing what action you took or what you are proposing. Ensure 'action' matches one of the defined categories.
 Current Context (user viewing): ${sanitizeInput(currentContext || "dashboard", 100)}
-Current System Time: ${currentTimeIso}
 `;
 
     const response = await ai.models.generateContent({
@@ -1598,6 +1874,8 @@ Current System Time: ${currentTimeIso}
     }
 
     res.json({ action, responseText, extractedData });
+    aiMemoryService.addRecommendation(`Processed command "${cleanPrompt}" identifying action "${action}".`);
+    aiMemoryService.addMemoryItem(`User executed command palette action "${action}" for prompt: "${cleanPrompt}".`);
   } catch (error: any) {
     console.error("AI Command parse failed, executing offline fallback:", sanitizeError(error));
     const offlineResult = parseCommandOffline(req.body.prompt || "");
